@@ -1,0 +1,6 @@
+AstroJC-Utils
+-------------
+
+This package is a collection of useful personal python codes to handle day-to-day stellar astrophysics tasks.
+
+Mainly, this codes are based in Astropy, Numpy, Scipy, Matplotlib, and some math optimizations written with Numba (LLVM) and Cython.
