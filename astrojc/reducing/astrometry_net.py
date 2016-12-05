@@ -10,9 +10,9 @@ from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 from astropy import units
+import numpy as np
 
-from ..logging import logging
-log = logging.getLogger(__name__)
+from ..logging import log
 
 ASTROMETRY_COMMAND = '/usr/bin/solve-field'
 
@@ -65,8 +65,7 @@ def solve_field(path, stdout=None, stderr=None, **options):
     basename = os.path.basename(path)
     root, ext = os.path.splitext(basename)
     # Place all output files in this directory
-    kwargs = dict(prefix = root + '_', suffix = '_astrometry.net',
-                  dir='/tmp')
+    kwargs = dict(prefix = root + '_', suffix = '_astrometry.net')
     output_dir = tempfile.mkdtemp(**kwargs)
 
     solved_file = os.path.join(output_dir, root + '.solved')
@@ -87,8 +86,10 @@ def solve_field(path, stdout=None, stderr=None, **options):
         with open(solved_file, 'rb') as fd:
             if ord(fd.read()) != 1:
                 raise AstrometryNetUnsolvedField(path)
-
-        return WCS(fits.open(os.path.join(output_dir, root + '.wcs'))[0].header), output_dir
+        solved_wcs_file = os.path.join(output_dir, root + '.wcs')
+        log.info('Loading solved header from %s' % solved_wcs_file)
+        solved_header = fits.getheader(solved_wcs_file, 0)
+        return solved_header, output_dir
 
     except subprocess.CalledProcessError as e:
         #shutil.rmtree(output_dir)
@@ -133,7 +134,8 @@ def solve(path, output_file=None, ra=None, dec=None, pltscl=None,
     dec : str or float, optional
         Aproximated Declination of the center of the field in degrees.
     pltscl: str or float, optional
-        Aproximated plate scale of the field, in arcsec.
+        Aproximated plate scale of the field, in arcsec. We assume it has 10% of
+        accuracy.
     rak : str, optional
         Header key for extract the right ascension of the center of the field
         from header.
@@ -151,8 +153,9 @@ def solve(path, output_file=None, ra=None, dec=None, pltscl=None,
 
     Returns:
     --------
-    wcs : `astropy.wcs.WCS`
-        The solved WCS of the field.
+    header : `astropy.wcs.WCS`
+        A header containing the solved wcs of the field and another information
+        from astrometry.net.
 
     '''
     # Path to the temporary FITS file containing the WCS header
@@ -200,36 +203,26 @@ def solve(path, output_file=None, ra=None, dec=None, pltscl=None,
 
     if pltscl is not None:
         log.info("Usign given plate scale: %s" % str(pltscl))
-        if hbin is None:
-            hbin = 1
         options['scale-units'] = 'arcsecperpix'
-        options['scale-high'] = 1.1*pltscl*hbin
-        options['scale-low'] = 0.9*pltscl*hbin
+        options['scale-high'] = 1.1*pltscl
+        options['scale-low'] = 0.9*pltscl
     elif not pltk is None:
         log.info("Figuring out the plate scale from FITS header")
         if hdulist is None:
             hdulist = fits.open(path)
             header = hdulist[0].header
         try:
-            pltscl = float(str(header[pltk]).replace(',','.'))
+            pltscl = float(str(header[pltk]).replace(',','.')) #fix for OPD
+            options['scale-units'] = 'arcsecperpix'
+            options['scale-high'] = 1.1*pltscl
+            options['scale-low'] = 0.9*pltscl
         except KeyError:
             log.warn("Cannot understand plate scale in FITS header")
-        else:
-            if not bink is None:
-                try:
-                    hbin = float(str(header[bink]).replace(',','.'))
-                except:
-                    hbin = 1
-            else:
-                hbin = 1
-            options['scale-units'] = 'arcsecperpix'
-            options['scale-high'] = 1.1*pltscl*hbin
-            options['scale-low'] = 0.9*pltscl*hbin
 
     with open(os.devnull, 'wb') as fd:
         log.info("Running {0}".format(ASTROMETRY_COMMAND))
-        wcs, output_dir = solve_field(path, stdout=fd, stderr=fd, **options)
+        solved_header, output_dir = solve_field(path, stdout=fd, stderr=fd, **options)
 
     log.info("Removing working directory")
     shutil.rmtree(output_dir)
-    return wcs
+    return solved_header

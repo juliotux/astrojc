@@ -5,6 +5,7 @@ from astroquery.vizier import Vizier
 from astropy import units as u
 import functools
 import bottleneck as bn
+import numpy as np
 
 def from_simbad(center, radius, filter):
     s = Simbad()

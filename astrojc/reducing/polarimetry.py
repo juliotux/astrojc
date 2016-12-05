@@ -21,7 +21,7 @@ def _estimate_d(x):
 def estimate_dxdy(x, y):
     return _estimate_d(x), _estimate_d(y)
 
-def match_pairs(positions, (dx, dy), tolerance=1.0):
+def match_pairs(positions, dx, dy, tolerance=1.0):
     dt = np.dtype([('o', int), ('e', int)])
     results = np.zeros(len(positions), dtype=dt)
     npairs = 0

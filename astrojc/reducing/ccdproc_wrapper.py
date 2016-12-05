@@ -4,6 +4,9 @@
 import ccdproc
 from ccdproc import CCDData
 from ccdproc.combiner import combine
+import numpy as np
+
+mem_limit = 1e8
 
 def process_image(*args, **kwargs):
     '''ccdproc.ccd_process(ccd, oscan=None, trim=None, error=False, master_bias=None,
