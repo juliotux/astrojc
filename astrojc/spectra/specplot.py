@@ -5,8 +5,7 @@ Generic module to plot spectra in matplotlib.
 import numpy as np
 from .spectrum import Spectrum
 
-__all__ = ['to_vel', 'set_limits', 'set_labels',
-           'plot_spec', 'plot_spec_vel', 'ticks_ids', 'plot_line_id']
+__all__ = ['to_vel', 'plot_spec', 'plot_spec_vel', 'ticks_ids', 'plot_line_id']
 
 def to_vel(wcenter, wave):
     '''
@@ -25,22 +24,6 @@ def _join_strings(arr1, arr2):
         else:
             outarray.append(str(arr1[i]) + ' m' + str(arr2[i]))
     return outarray
-
-def set_limits(ax, x_min=None, x_max=None, y_min=None, y_max=None):
-    '''
-    Easy set the limits of the axis.
-    '''
-    #TODO: transfer to a mpl_helper.py
-    ax.set_xlim(left=x_min, right=x_max)
-    ax.set_ylim(bottom=y_min, top=y_max)
-
-def set_labels(ax, xlabel, ylabel):
-    '''
-    Easy set the labels of the axis.
-    '''
-    #TODO: transfer to a mpl_helper.py
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
 
 def plot_spec(ax, spec, offset=0, fmt='k-', label=None, **kwargs):
     '''
