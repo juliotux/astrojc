@@ -5,7 +5,8 @@ import numpy as np
 
 from .spectrum import Spectrum
 
-__all__ = ['iraf_fits_loader', 'xshooter_sflx_loader', 'xshooter_full_loader']
+__all__ = ['iraf_fits_loader', 'xshooter_sflx_loader', 'xshooter_full_loader',
+           'eso_tfits_loader']
 
 def xshooter_sflx_loader(fname):
     '''
@@ -59,3 +60,9 @@ def iraf_fits_loader(fname):
 
     return Spectrum(wavelength, flux, header)
 
+def eso_tfits_loader(fname):
+    '''
+    Reads ESO TFIS format.
+    '''
+    f = fits.open(fname)
+    return Spectrum(f[1].data['wave'], f[1].data['flux'], f[1].header)
