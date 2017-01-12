@@ -1,0 +1,34 @@
+#!/bin/env python3
+
+import os
+import sys
+
+from PyQt5 import QtCore, QtWidgets
+from astrojc.gui.qt_2dimage_plotter import HDUFigureCanvas2D
+from astrojc.gui.qt_fitsfiletree import HDUFileSystemModel
+
+from astropy.io import fits
+
+if __name__ == '__main__':
+    app = QtWidgets.QApplication(sys.argv)
+    app.setApplicationName('FitsExplorer')
+
+    mw = QtWidgets.QMainWindow()
+    mw.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+    mw.setWindowTitle("FitsExplorer")
+
+    hdu = fits.open('/home/julio/SP_I_0017.fits')[0]
+    folder = '/home/julio'
+    hdu_fig = HDUFigureCanvas2D(hdu)
+    hdu_tree = HDUFileSystemModel(folder)
+
+    main_widget = QtWidgets.QWidget(mw)
+    layout = QtWidgets.QHBoxLayout(main_widget)
+    layout.addWidget(hdu_tree)
+    layout.addWidget(hdu_fig)
+
+    main_widget.setFocus()
+    mw.setCentralWidget(main_widget)
+    mw.show()
+
+    sys.exit(app.exec_())
