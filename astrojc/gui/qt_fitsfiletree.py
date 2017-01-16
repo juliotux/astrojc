@@ -1,7 +1,6 @@
-from PyQt5.QtWidgets import (QWidget, QTreeView, QApplication, QFileSystemModel,
+from qtpy.QtWidgets import (QWidget, QTreeView, QApplication, QFileSystemModel,
                              QLabel, QLineEdit, QVBoxLayout, QListView)
-from PyQt5.QtCore import pyqtSlot, QModelIndex
-from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem
+from qtpy.QtGui import QIcon, QStandardItemModel, QStandardItem
 import os
 import sys
 
@@ -30,7 +29,6 @@ class HDUFileSystemModel(QWidget):
         self.layout.addWidget(self.filetree)
         self.layout.addWidget(self.hdulist)
 
-    @pyqtSlot(QModelIndex)
     def on_filetree_clicked(self, index):
         indexItem = self.dirmodel.index(index.row(), 0, index.parent())
         self.hdulistmodel.clear()
@@ -42,7 +40,6 @@ class HDUFileSystemModel(QWidget):
             except:
                 pass
 
-    @pyqtSlot(QModelIndex)
     def on_hdulist_clicked(self, index):
         indexItem = self.hdulistmodel.index(index.row(), 0, index.parent())
 

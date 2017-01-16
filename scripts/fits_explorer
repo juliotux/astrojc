@@ -2,12 +2,22 @@
 
 import os
 import sys
+sys.path.append('./build/lib/')
 
-from PyQt5 import QtCore, QtWidgets
+from qtpy import QtCore, QtWidgets
 from astrojc.gui.qt_2dimage_plotter import HDUFigureCanvas2D
 from astrojc.gui.qt_fitsfiletree import HDUFileSystemModel
 
 from astropy.io import fits
+
+class ViewWidget(QtWidgets.QTabWidget):
+    def __init__(self, parent=None):
+        super(QtWidgets.QTabWidget, self).__init__(parent)
+        self.setTabsClosable(True)
+
+    def add_hdu_tab(self, hdu, name):
+        if isinstance(hdu, (fits.PrimaryHDU, fits.ImageHDU)):
+            self.addTab(HDUFigureCanvas2D(hdu, self), name)
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
@@ -17,15 +27,16 @@ if __name__ == '__main__':
     mw.setAttribute(QtCore.Qt.WA_DeleteOnClose)
     mw.setWindowTitle("FitsExplorer")
 
-    hdu = fits.open('/home/julio/SP_I_0017.fits')[0]
     folder = '/home/julio'
-    hdu_fig = HDUFigureCanvas2D(hdu)
-    hdu_tree = HDUFileSystemModel(folder)
+    hdu = fits.open('/home/julio/SP_I_0017.fits')[0]
+    hdu_tree = HDUFileSystemModel(folder, mw)
+    tab_view = ViewWidget(mw)
+    tab_view.add_hdu_tab(hdu, 'testing')
 
     main_widget = QtWidgets.QWidget(mw)
     layout = QtWidgets.QHBoxLayout(main_widget)
     layout.addWidget(hdu_tree)
-    layout.addWidget(hdu_fig)
+    layout.addWidget(tab_view)
 
     main_widget.setFocus()
     mw.setCentralWidget(main_widget)
