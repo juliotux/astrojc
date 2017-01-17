@@ -22,29 +22,46 @@ class ViewWidget(QtWidgets.QTabWidget):
         elif isinstance(hdu, (fits.BinTableHDU, fits.TableHDU)):
             self.addTab(HDUTableWidget(hdu, self), name)
 
+class FitsExplorerMW(QtWidgets.QMainWindow):
+    def __init__(self, parent=None):
+        super(QtWidgets.QMainWindow, self).__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+        self.setWindowTitle('FitsExplorer')
+
+        self.setMinimumSize(800, 600)
+
+        self.create_file_tree()
+        self.create_fits_viewer()
+        self.create_layout()
+
+    def create_file_tree(self, root=None):
+        if root is None:
+            root = ''
+        self.file_tree = HDUFileSystemModel(root, self)
+
+    def create_fits_viewer(self):
+        self.fits_viewer = ViewWidget(self)
+
+    def create_layout(self):
+        self.main_widget = QtWidgets.QWidget(self)
+        self.layout = QtWidgets.QHBoxLayout(self.main_widget)
+        self.layout.addWidget(self.file_tree)
+        self.layout.addWidget(self.fits_viewer)
+        self.main_widget.setFocus()
+        self.setCentralWidget(self.main_widget)
+
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName('FitsExplorer')
 
-    mw = QtWidgets.QMainWindow()
-    mw.setAttribute(QtCore.Qt.WA_DeleteOnClose)
-    mw.setWindowTitle("FitsExplorer")
+    mw = FitsExplorerMW()
 
-    folder = '/home/julio'
     hdu = fits.open('/home/julio/SP_I_0017.fits')[0]
     hdut = fits.open('/home/julio/Test2.fits')[1]
-    hdu_tree = HDUFileSystemModel(folder, mw)
-    tab_view = ViewWidget(mw)
-    tab_view.add_hdu_tab(hdu, 'testing image')
-    tab_view.add_hdu_tab(hdut, 'testing table')
 
-    main_widget = QtWidgets.QWidget(mw)
-    layout = QtWidgets.QHBoxLayout(main_widget)
-    layout.addWidget(hdu_tree)
-    layout.addWidget(tab_view)
+    mw.fits_viewer.add_hdu_tab(hdu, 'testing image')
+    mw.fits_viewer.add_hdu_tab(hdut, 'testing table')
 
-    main_widget.setFocus()
-    mw.setCentralWidget(main_widget)
     mw.show()
 
     sys.exit(app.exec_())
