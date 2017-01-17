@@ -9,7 +9,7 @@ from matplotlib.figure import Figure
 from matplotlib.colors import LogNorm, Normalize, PowerNorm
 import numpy as np
 
-class ZoomPan:
+class ZoomPan(object):
     '''
     Activates zoom and pan with the scrollwhell in an axes.
 
@@ -28,6 +28,8 @@ class ZoomPan:
         self.y1 = None
         self.xpress = None
         self.ypress = None
+        self.position_x = None
+        self.position_y = None
 
     def zoom_factory(self, ax, base_scale = 1.1):
         def zoom(event):
@@ -66,7 +68,7 @@ class ZoomPan:
     def pan_factory(self, ax):
         #TODO: Only mid button for pan. Right button for brigthness/contrast
         def onPress(event):
-            if event.inaxes != ax: return
+            if event.inaxes != ax or event.button != 2: return
             self.cur_xlim = ax.get_xlim()
             self.cur_ylim = ax.get_ylim()
             self.press = self.x0, self.y0, event.xdata, event.ydata
@@ -77,8 +79,14 @@ class ZoomPan:
             ax.figure.canvas.draw()
 
         def onMotion(event):
+            if event.inaxes != ax:
+                if self.position_x is not None or self.position_y is not None:
+                    self.position_x = None
+                    self.position_y = None
+                    return
+            self.position_x = event.xdata
+            self.position_y = event.ydata
             if self.press is None: return
-            if event.inaxes != ax: return
             dx = event.xdata - self.xpress
             dy = event.ydata - self.ypress
             self.cur_xlim -= dx
@@ -129,7 +137,7 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
         self.toolbar.addAction(self.action_config_plot)
 
     def create_plot(self):
-        self.fig = Figure(figsize=(8, 8), dpi=100)
+        self.fig = Figure(figsize=(8, 8), dpi=90)
         self.ax = self.fig.add_axes((0.0, 0.0, 1.0, 1.0))
         self.figCanvas = FigureCanvas(self.fig)
         FigureCanvas.setSizePolicy(self.figCanvas,
@@ -145,7 +153,7 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
         self.plot_image()
 
     def plot_image(self):
-        im = self.ax.imshow(self.hdu.data, **self.plot_config)
+        im = self.ax.imshow(self.hdu.data, **self.plot_config, origin='lower')
         cbar = self.fig.colorbar(im)
 
     def _get_min_max(self):
