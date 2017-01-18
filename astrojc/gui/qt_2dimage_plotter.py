@@ -9,6 +9,8 @@ from matplotlib.figure import Figure
 from matplotlib.colors import LogNorm, Normalize, PowerNorm
 import numpy as np
 
+from .qt_helper import new_spacer
+
 class ZoomPan(object):
     '''
     Activates zoom and pan with the scrollwhell in an axes.
@@ -131,8 +133,7 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
                                              'Pick Star', self)
 
         self.toolbar.addAction(self.action_pick)
-        self.spacer = QtWidgets.QWidget()
-        self.spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.spacer = new_spacer()
         self.toolbar.addWidget(self.spacer)
         self.toolbar.addAction(self.action_config_plot)
 

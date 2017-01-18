@@ -1,70 +1,146 @@
-from qtpy.QtWidgets import (QWidget, QTreeView, QApplication, QFileSystemModel,
-                             QLabel, QLineEdit, QVBoxLayout, QListView)
-from qtpy.QtGui import QIcon, QStandardItemModel, QStandardItem
+from qtpy import QtCore, QtWidgets, QtGui
 import os
 import sys
 
 from astropy.io import fits
 
-class HDUFileSystemModel(QWidget):
+from .qt_helper import new_spacer
+
+hdu_icon_map = {'image': 'image-x-generic',
+                'table': 'x-office-spreadsheet',
+                'unkown': ''}
+
+class HDUTreeItem(QtWidgets.QWidget):
+    def __init__(self, hdu, parent=None):
+        super(QtWidgets.QWidget, self).__init__(parent)
+        self.hdu = hdu
+        self.name = hdu.name
+        if self.hdu.__class__.__name__ in ['PrimaryHDU', 'ImageHDU']:
+            self.type = 'image'
+            try:
+                self.shape = self.hdu.data.shape
+                self.size_str = str(self.shape[0])
+                for i in self.shape[1:]:
+                    self.size_str = self.size_str + 'x' + str(i)
+            except:
+                self.shape = None
+                self.size_str = 'empty'
+        elif self.hdu.__class__.__name__ in ['TableHDU', 'BinTableHDU']:
+            self.type = 'table'
+            try:
+                self.shape = (len(self.hdu.data), len(self.hdu.data.columns))
+                self.size_str = '%i cols x %i rows' % self.shape
+            except:
+                self.shape = None
+                self.size_str = 'empty'
+        else:
+            self.type = 'unkown'
+            self.size_str = 'unkown'
+            self.shape = None
+
+        self.create_widget()
+        self.plotter = None
+
+    def create_widget(self):
+        '''
+        Creates the widget layout.
+        '''
+        l1 = QtWidgets.QHBoxLayout()
+        l2 = QtWidgets.QVBoxLayout()
+        l3 = QtWidgets.QHBoxLayout()
+
+        name_label = QtWidgets.QLabel(self.name)
+        size_label = QtWidgets.QLabel(self.size_str)
+
+        l3.addWidget(name_label)
+        l3.addWidget(size_label)
+
+        class_name_label = QtWidgets.QLabel(self.hdu.__class__.__name__)
+        l2.addWidget(class_name_label)
+        l2.addLayout(l3)
+
+        icon = QtWidgets.QLabel()
+        icon.setPixmap(QtGui.QIcon.fromTheme(hdu_icon_map[self.type]).pixmap(48))
+        l1.addWidget(icon)
+        l1.addLayout(l2)
+        l1.addWidget(new_spacer())
+
+        self.open_data_button = QtWidgets.QPushButton()
+        self.open_data_button.setText('Open\nData')
+        self.open_header_button = QtWidgets.QPushButton()
+        self.open_header_button.setText('Open\nHeader')
+
+        l1.addWidget(self.open_data_button)
+        l1.addWidget(self.open_header_button)
+
+        self.setLayout(l1)
+
+    def set_plotter(self, plotter):
+        '''
+        Set the plotter used to show the data.
+        '''
+        self.plotter = plotter
+
+class HDUFileSystemModel(QtWidgets.QWidget):
     def __init__(self, path, parent=None):
-        super(QWidget, self).__init__(parent)
+        super(QtWidgets.QWidget, self).__init__(parent)
 
         self.pathRoot = path
-        self.dirmodel = QFileSystemModel(self)
+        self.dirmodel = QtWidgets.QFileSystemModel(self)
         self.dirmodel.setRootPath(self.pathRoot)
         self.indexRoot = self.dirmodel.index(self.dirmodel.rootPath())
 
-        self.filetree = QTreeView(self)
+        self.filetree = QtWidgets.QTreeView(self)
         self.filetree.setModel(self.dirmodel)
         self.filetree.setRootIndex(self.indexRoot)
         self.filetree.clicked.connect(self.on_filetree_clicked)
 
-        self.hdulist = QListView(self)
-        self.hdulistmodel = QStandardItemModel(self)
-        self.hdulist.setModel(self.hdulistmodel)
-        self.hdulist.clicked.connect(self.on_hdulist_clicked)
+        self.hdulist = None
 
-        self.layout = QVBoxLayout(self)
+        self.layout = QtWidgets.QVBoxLayout(self)
         self.layout.addWidget(self.filetree)
         self.layout.addWidget(self.hdulist)
 
     def on_filetree_clicked(self, index):
         indexItem = self.dirmodel.index(index.row(), 0, index.parent())
-        self.hdulistmodel.clear()
+        self.hdulist.clear()
         if not self.dirmodel.isDir(indexItem):
-            try:
-                f = fits.open(self.dirmodel.filePath(indexItem))
-                for i in f:
-                    self.hdulistmodel.appendRow(self._get_hdu_item(i))
-            except:
-                pass
-
-    def on_hdulist_clicked(self, index):
-        indexItem = self.hdulistmodel.index(index.row(), 0, index.parent())
-
-    def _get_hdu_item(self, hdu):
-        name = ('... ' if hdu.name == '' else hdu.name + ' ')
-        if isinstance(hdu, fits.PrimaryHDU):
-            icon = QIcon.fromTheme('image-x-generic')
-            data = name + 'PrimaryHDU (%i axis)' % len(hdu.shape)
-        elif isinstance(hdu, fits.PrimaryHDU):
-            icon = QIcon.fromTheme('image-x-generic')
-            data = name + 'ImageHDU (%i axis)' % len(hdu.shape)
-        elif isinstance(hdu, fits.BinTableHDU):
-            icon = QIcon.fromTheme('x-office-spreadsheet')
-            data = name + 'BinTableHDU'
-        elif isinstance(hdu, fits.TableHDU):
-            icon = QIcon.fromTheme('x-office-spreadsheet')
-            data = name + 'TableHDU'
-        else:
-            icon = None
-            data = 'Unkowed HDU'
-        item = QStandardItem(icon, data)
-        item.hdu = hdu
-        return item
+            if hdulist is None:
+                raise ValueError('No HDUListView is connected. Use `setHDUListView`'
+                                 'To connect one.')
+            self.hdulist.add_fitsfile(self.dirmodel.filePath(indexItem))
 
     def set_root_path(self, path):
         self.pathRoot = path
         self.dirmodel.setRootPath(path)
         self.indexRoot = self.dirmodel.index(self.dirmodel.rootPath())
+
+    def setHDUListView(self, hdulist):
+        self.hdulist = hdulist
+
+class HDUListView(QtWidgets.QListWidget):
+    def __init__(self, parent=None):
+        super(QtWidgets.QListWidget, self).__init__(parent)
+        self.plotter = None
+
+    def add_fitsfile(self, hdulist):
+        self.clear()
+        try:
+            f = fits.open()
+                for i in f:
+                    self.add_hdu(i)
+            except Exception as e:
+                print(e)
+                pass
+
+    def add_hdu(self, hdu):
+        newitem = QtWidgets.QListWidgetItem(self)
+        hduitem = HDUTreeItem(hdu)
+        newitem.setSizeHint(hduitem.sizeHint())
+        self.addItem(newitem)
+        self.setItemWidget(newitem, hduitem)
+        if plotter is not None:
+            self.hduitem.set_plotter(self.plotter)
+
+    def set_plotter(self, plotter):
+        self.plotter = plotter
