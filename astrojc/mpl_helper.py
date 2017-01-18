@@ -53,6 +53,30 @@ def suplabel(fig, axis,label,label_prop=None,
              ha=ha,va=va,
              **label_prop)
 
+def add_subplot_axes(ax, rect, axisbg='w'):
+    '''
+    Add a subaxes plot inside an axes.
+    '''
+    fig = ax.get_figure()
+    box = ax.get_position()
+    width = box.width
+    height = box.height
+    inax_position  = ax.transAxes.transform(rect[0:2])
+    transFigure = fig.transFigure.inverted()
+    infig_position = transFigure.transform(inax_position)
+    x = infig_position[0]
+    y = infig_position[1]
+    width *= rect[2]
+    height *= rect[3]  # <= Typo was here
+    subax = fig.add_axes([x,y,width,height],axisbg=axisbg)
+    x_labelsize = subax.get_xticklabels()[0].get_size()
+    y_labelsize = subax.get_yticklabels()[0].get_size()
+    x_labelsize *= rect[2]**0.5
+    y_labelsize *= rect[3]**0.5
+    subax.xaxis.set_tick_params(labelsize=x_labelsize)
+    subax.yaxis.set_tick_params(labelsize=y_labelsize)
+    return subax
+
 class ZoomPan(object):
     '''
     Activates zoom and pan with the scrollwhell in an axes.
@@ -77,6 +101,7 @@ class ZoomPan(object):
 
     def zoom_factory(self, ax, base_scale = 1.1):
         def zoom(event):
+            if event.inaxes != ax: return
             cur_xlim = ax.get_xlim()
             cur_ylim = ax.get_ylim()
 
@@ -127,7 +152,7 @@ class ZoomPan(object):
                 if self.position_x is not None or self.position_y is not None:
                     self.position_x = None
                     self.position_y = None
-                    return
+                return
             self.position_x = event.xdata
             self.position_y = event.ydata
             if self.press is None: return
