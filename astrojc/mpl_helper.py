@@ -53,7 +53,7 @@ def suplabel(fig, axis,label,label_prop=None,
              ha=ha,va=va,
              **label_prop)
 
-class ZoomPan:
+class ZoomPan(object):
     '''
     Activates zoom and pan with the scrollwhell in an axes.
 
@@ -72,6 +72,8 @@ class ZoomPan:
         self.y1 = None
         self.xpress = None
         self.ypress = None
+        self.position_x = None
+        self.position_y = None
 
     def zoom_factory(self, ax, base_scale = 1.1):
         def zoom(event):
@@ -108,8 +110,9 @@ class ZoomPan:
         return zoom
 
     def pan_factory(self, ax):
+        #Only mid button for pan
         def onPress(event):
-            if event.inaxes != ax: return
+            if event.inaxes != ax or event.button != 2: return
             self.cur_xlim = ax.get_xlim()
             self.cur_ylim = ax.get_ylim()
             self.press = self.x0, self.y0, event.xdata, event.ydata
@@ -120,8 +123,14 @@ class ZoomPan:
             ax.figure.canvas.draw()
 
         def onMotion(event):
+            if event.inaxes != ax:
+                if self.position_x is not None or self.position_y is not None:
+                    self.position_x = None
+                    self.position_y = None
+                    return
+            self.position_x = event.xdata
+            self.position_y = event.ydata
             if self.press is None: return
-            if event.inaxes != ax: return
             dx = event.xdata - self.xpress
             dy = event.ydata - self.ypress
             self.cur_xlim -= dx
