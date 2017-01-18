@@ -39,7 +39,8 @@ class HDUTreeItem(QtWidgets.QWidget):
             self.shape = None
 
         self.create_widget()
-        self.plotter = None
+        self.def_open_data = None
+        self.def_open_header = None
 
     def create_widget(self):
         '''
@@ -67,19 +68,43 @@ class HDUTreeItem(QtWidgets.QWidget):
 
         self.open_data_button = QtWidgets.QPushButton()
         self.open_data_button.setText('Open\nData')
+        self.open_data_button.clicked.connect(self.open_data_action)
+        self.open_data_button.setEnabled(False)
         self.open_header_button = QtWidgets.QPushButton()
         self.open_header_button.setText('Open\nHeader')
+        self.open_header_button.clicked.connect(self.open_header_action)
+        self.open_header_button.setEnabled(False)
 
         l1.addWidget(self.open_data_button)
         l1.addWidget(self.open_header_button)
 
         self.setLayout(l1)
 
-    def set_plotter(self, plotter):
+    def set_open_data(self, open_data):
         '''
-        Set the plotter used to show the data.
+        Set the function to show the data
         '''
-        self.plotter = plotter
+        self.def_open_data = open_data
+        if self.def_open_data is not None:
+            self.open_data_button.setEnabled(True)
+        else:
+            self.open_data_button.setEnabled(False)
+
+    def set_open_header(self, open_header):
+        '''
+        Set the function to open the header
+        '''
+        self.def_open_header = open_header
+        if self.def_open_header is not None:
+            self.open_header_button.setEnabled(True)
+        else:
+            self.open_header_button.setEnabled(False)
+
+    def open_data_action(self):
+        self.def_open_data(self.hdu)
+
+    def open_header_action(self):
+        self.def_open_header(self.hdu.header)
 
 class HDUFileSystemModel(QtWidgets.QWidget):
     def __init__(self, path, parent=None):
@@ -103,9 +128,8 @@ class HDUFileSystemModel(QtWidgets.QWidget):
 
     def on_filetree_clicked(self, index):
         indexItem = self.dirmodel.index(index.row(), 0, index.parent())
-        self.hdulist.clear()
         if not self.dirmodel.isDir(indexItem):
-            if hdulist is None:
+            if self.hdulist is None:
                 raise ValueError('No HDUListView is connected. Use `setHDUListView`'
                                  'To connect one.')
             self.hdulist.add_fitsfile(self.dirmodel.filePath(indexItem))
@@ -121,26 +145,42 @@ class HDUFileSystemModel(QtWidgets.QWidget):
 class HDUListView(QtWidgets.QListWidget):
     def __init__(self, parent=None):
         super(QtWidgets.QListWidget, self).__init__(parent)
-        self.plotter = None
+        self.def_open_data = None
+        self.def_open_header = None
 
-    def add_fitsfile(self, hdulist):
+    def add_fitsfile(self, fname):
+        '''
+        Add all HDUs from a fits file to the list.
+        '''
         self.clear()
         try:
-            f = fits.open()
-                for i in f:
-                    self.add_hdu(i)
-            except Exception as e:
-                print(e)
-                pass
+            f = fits.open(fname)
+            for i in f:
+                self.add_hdu(i)
+        except Exception as e:
+            print(e)
+            pass
 
     def add_hdu(self, hdu):
+        '''
+        Add a HDU instance to the list.
+        '''
         newitem = QtWidgets.QListWidgetItem(self)
         hduitem = HDUTreeItem(hdu)
         newitem.setSizeHint(hduitem.sizeHint())
         self.addItem(newitem)
         self.setItemWidget(newitem, hduitem)
-        if plotter is not None:
-            self.hduitem.set_plotter(self.plotter)
+        hduitem.set_open_data(self.def_open_data)
+        hduitem.set_open_header(self.def_open_header)
 
-    def set_plotter(self, plotter):
-        self.plotter = plotter
+    def set_open_data(self, open_data):
+        '''
+        Set the function to show the data
+        '''
+        self.def_open_data = open_data
+
+    def set_open_header(self, open_header):
+        '''
+        Set the function to open the header
+        '''
+        self.def_open_header = open_header
