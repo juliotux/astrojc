@@ -9,6 +9,11 @@ from matplotlib.figure import Figure
 from matplotlib.colors import LogNorm, Normalize, PowerNorm
 import numpy as np
 
+from ..reducing.psf_fitting import (extract_data, xy2r,
+                                    fit_moffat_spatial, fit_moffat_radial,
+                                    fit_gaussian_spatial, fit_gaussian_radial)
+from photutils
+
 from .qt_helper import new_spacer
 from ..mpl_helper import ZoomPan
 
@@ -19,31 +24,51 @@ pick_rect = [[0.82, 0.1, 0.18, 0.25],
              [0.82, 0.7, 0.18, 0.25]]
 
 class Picker():
-    def __init__(self, ax, hdu):
+    #TODO: add a method to create external plots out of the figure (dock widgets?)
+    def __init__(self, ax, hdu, boxsize=30, model='gaussian', n_contour=10,
+                 surface_wire = False, mode='radial'):
         self.hdu = hdu
         self.ax = ax
         self.fig = ax.get_figure()
 
+        self.boxsize = boxsize
+        self.model = model
+        self.n_contour = n_contour
+        self.surface_wire = surface_wire
+
         self.pick = None
-        self.cpress = None
-
         self.naxes = None
-
-        self.fig.canvas.mpl_connect('button_press_event', self.onPress)
+        self.connected = None
 
     def onPress(self, event):
         if event.inaxes == self.ax:
             if event.button == 1:
                 self.pick = (event.xdata, event.ydata)
                 self.do_pick(self.pick)
-            if event.button == 3:
-                self.cpress = (event.xdata, event.ydata)
 
     def do_pick(self, pick):
-        if self.naxes == None:
+        if self.naxes == None or len(self.naxes) == 0:
             self.naxes = [self.fig.add_axes(i) for i in pick_rect]
             self.ax.set_position(picked_im_rect)
 
+    def connect(self):
+        if self.connected == None:
+            self.connected = self.fig.canvas.mpl_connect('button_press_event',
+                                                         self.onPress)
+
+    def remove_auxiliary_axes(self):
+        if self.naxes is not None:
+            for i in self.naxes:
+                i.remove()
+            self.naxes = None
+            self.ax.set_position(default_im_rect)
+
+    def disconnect(self):
+        if self.connected is not None:
+            self.fig.canvas.mpl_disconnect(self.connected)
+            self.connected = None
+            self.remove_auxiliary_axes()
+            self.fig.canvas.draw()
 
 class HDUFigureCanvas2D(QtWidgets.QWidget):
     def __init__(self, hdu, parent=None):
@@ -64,18 +89,22 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
 
         self.action_reset = QtWidgets.QAction(QtGui.QIcon.fromTheme('reset'),
                                              'Reset', self)
-        self.toolbar.addAction(self.action_reset)
 
         self.action_config_plot = QtWidgets.QAction(QtGui.QIcon.fromTheme('document-properties'),
                                              'Configure', self)
+
         self.config_pick = QtWidgets.QAction(QtGui.QIcon.fromTheme('document-properties'),
                                              'Configure Picker', self)
+
         self.action_pick = QtWidgets.QAction(QtGui.QIcon.fromTheme('find-location-symbolic'),
                                              'Pick Star', self)
+        self.action_pick.setCheckable(True)
+        self.action_pick.changed.connect(self.toogle_pick)
 
+        self.toolbar.addAction(self.action_reset)
+        self.toolbar.addWidget(new_spacer())
         self.toolbar.addAction(self.action_pick)
-        self.spacer = new_spacer()
-        self.toolbar.addWidget(self.spacer)
+        self.toolbar.addWidget(new_spacer())
         self.toolbar.addAction(self.action_config_plot)
 
     def create_plot(self):
@@ -98,7 +127,13 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
 
     def plot_image(self):
         im = self.ax.imshow(self.hdu.data, **self.plot_config, origin='lower')
-        cbar = self.fig.colorbar(im)
+        #cbar = self.fig.colorbar(im)
+
+    def toogle_pick(self):
+        if self._pick.connected is None:
+            self._pick.connect()
+        else:
+            self._pick.disconnect()
 
     def _get_min_max(self):
         vmin = np.max([0, np.min(self.hdu.data)])
