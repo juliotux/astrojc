@@ -13,7 +13,6 @@ from numba import autojit
 
 @autojit
 def compute_sky(z, sigma=2, mode='mean'):
-    #TODO: Mode can be 'plane' too, but need to be implemented.
     '''
     mode:
         mean: compute de mean of 33% lower values

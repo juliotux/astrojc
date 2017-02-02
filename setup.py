@@ -8,5 +8,5 @@ setup(name='AstroJC-Utils',
       url='https://www.on.br/',
       packages=['astrojc', 'astrojc', 'astrojc.fitting', 'astrojc.io',
                 'astrojc.reducing', 'astrojc.photometry', 'astrojc.spectra',
-                'astrojc.gui']
+                'astrojc.gui', 'astrojc.math']
      )
