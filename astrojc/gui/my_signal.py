@@ -2,6 +2,9 @@
 Simple class to emulate signals in python.
 '''
 
+class NotConnectedException(Exception):
+    pass
+
 class MySignal(object):
     '''
     This class implements a simple way to handle signals in Python, without use
@@ -28,4 +31,5 @@ class MySignal(object):
         '''
         if self._emit_function is not None:
             return self._emit_function(*args, **kwargs)
-        return None
+        raise NotConnectedException('This signal is not connected with any'
+                                    'emit function.')

@@ -12,10 +12,11 @@ import numpy as np
 from ..reducing.psf_fitting import (extract_data, xy2r,
                                     fit_moffat_spatial, fit_moffat_radial,
                                     fit_gaussian_spatial, fit_gaussian_radial)
-from photutils
 
 from .qt_helper import new_spacer
 from ..mpl_helper import ZoomPan
+from .imexam import Imexam
+from .my_signal import MySignal
 
 default_im_rect = [0.0, 0.0, 1.0, 1.0]
 picked_im_rect = [0.0, 0.1, 0.8, 0.8]
@@ -30,6 +31,9 @@ class Picker():
         self.hdu = hdu
         self.ax = ax
         self.fig = ax.get_figure()
+
+        #self.imexam = Imexam()
+        #self.imexam.imexam_factory(self.ax, None)
 
         self.boxsize = boxsize
         self.model = model
