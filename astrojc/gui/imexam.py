@@ -6,6 +6,7 @@ Includes a new key set to fits explorer.
 
 from astropy.modeling import models, fitting
 from matplotlib import pyplot as plt
+import numpy as np
 
 from ..logging import log
 from .my_signal import MySignal
@@ -59,6 +60,9 @@ class Imexam():
         self.connected = self.fig.canvas.mpl_connect('key_press_event',
                                                      self.onKeyPress)
 
+    def _dummy_plot(self):
+        self.plot_ax.plot(np.random.rand(5), np.random.rand(5))
+
     def onKeyPress(self, event):
         if event.inaxes != self.ax:
             return
@@ -75,60 +79,70 @@ class Imexam():
         '''
         `a` key from imexam
         '''
-        self.print_text.emit('Not implemented yet')
+        self.print_text.emit('x: %.1f, y:%.1f' % (x, y))
 
     def line_fit(self, x, y):
         '''
         `j` key from imexam
         '''
         self._check_plot_ax()
+        self._dummy_plot()
 
     def column_fit(self, x, y):
         '''
         `k` key from imexam
         '''
         self._check_plot_ax()
+        self._dummy_plot()
 
     def report_stat(self, x, y):
         '''
         `m` key from imexam
         '''
         self._check_plot_ax()
+        self._dummy_plot()
 
     def plot_line(self, x, y):
         '''
         `l` key from imexam
         '''
         self._check_plot_ax()
+        self._dummy_plot()
 
     def plot_column(self, x, y):
         '''
         `c` key from imexam
         '''
+        self._check_plot_ax()
+        self._dummy_plot()
 
     def radial_profile(self, x, y):
         '''
         `r` key from imexam
         '''
         self._check_plot_ax()
+        self._dummy_plot()
 
     def histogram(self, x, y):
         '''
         `h` key from imexam
         '''
         self._check_plot_ax()
+        self._dummy_plot()
 
     def contour(self, x, y):
         '''
         `e` key from imexam
         '''
         self._check_plot_ax()
+        self._dummy_plot()
 
     def surface(self, x, y):
         '''
         `s` key from imexam
         '''
         self._check_plot_ax()
+        self._dummy_plot()
 
     def new_plot_axes(self, x, y):
         '''
