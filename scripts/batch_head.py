@@ -41,7 +41,7 @@ class BatchHeadEditMW(QDialog):
         self.create_run_layout()
 
         self.log_output = QTextEdit()
-        self.log_output.setFixedSize(550, 150)
+        self.log_output.setMinimumSize(550, 150)
 
         self.main_layout = QVBoxLayout()
         warning = QLabel('BE SURE TO BACKUP YOUR DATA BEFORE EDIT!')
@@ -73,7 +73,7 @@ class BatchHeadEditMW(QDialog):
 
         self.list_edit = QTextEdit()
 
-        layout.addWidget(QLabel('List of FITS files to edit:'), 0, 2)
+        layout.addWidget(QLabel('List of FITS files to edit (one file per line):'), 0, 2)
         layout.addWidget(self.select_files_button, 1, 0, 2, 2)
         layout.addWidget(self.open_list_file, 3, 0, 2, 2)
         layout.addWidget(QLabel('HDU'), 5, 0)
