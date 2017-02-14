@@ -21,6 +21,8 @@ except:
         except:
             raise ImportError('None build of Qt found.')
 
+from astropy.io import fits
+
 allowed_types = ['String', 'Integer', 'Decimal']
 
 class BatchHeadEditMW(QDialog):
@@ -136,7 +138,7 @@ class BatchHeadEditMW(QDialog):
         self.value = self.key_value.text()
         self.type = str(self.key_type.currentText())
         self.comment = self.key_comment.text()
-        self.hdu = self.hdu_number.value()
+        self.hdu = int(self.hdu_number.value())
 
     def run(self):
         self.get_values_from_fields()
@@ -169,7 +171,12 @@ class BatchHeadEditMW(QDialog):
 
         for i in self.file_list:
             try:
-                self.log('File: %s\n    - Key: %s    HDU: %i    Value: %s    Type: %s' % (i, self.hdu, self.key, value, self.type))
+                self.log('File: %s\n    - Key: %s    HDU: %i    Value: %s    Type: %s' % (i, self.key, self.hdu, value, self.type))
+                try:
+                    old = fits.getval(i, self.key, ext=self.hdu)
+                    self.log('    - Old value: %s' % str(old))
+                except:
+                    pass
                 fits.setval(i, self.key, value=value, comment=self.comment, ext=self.hdu)
             except Exception as e:
                 self.log('ERROR: Problems in write key:\n    - %s\n---------------' % e)
