@@ -37,8 +37,9 @@ class Imexam():
         self.print_text = MySignal()
 
     def _check_plot_ax(self):
-        if not isinstance(self.plot_ax, plt.Axes):
+        if self.plot_ax is None:
             self.plot_ax = self.create_plot_axes.emit()
+        self.plot_ax.cla()
 
     def set_hdu(self, hdu):
         self.hdu = hdu
@@ -57,8 +58,7 @@ class Imexam():
         self.ax = ax
         self.fig = ax.get_figure()
         self.plot_ax = plot_ax
-        self.connected = self.fig.canvas.mpl_connect('key_press_event',
-                                                     self.onKeyPress)
+        self.connected = self.fig.canvas.mpl_connect('key_press_event', self.onKeyPress)
 
     def _dummy_plot(self):
         self.plot_ax.plot(np.random.rand(5), np.random.rand(5))
@@ -148,7 +148,7 @@ class Imexam():
         '''
         `2` key from imexam
         '''
-        self.plot_ax = self.new_ax.emit()
+        self.plot_ax = self.create_plot_axes.emit()
 
 def imexamine(hdu):
     '''

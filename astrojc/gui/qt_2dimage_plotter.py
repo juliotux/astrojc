@@ -19,109 +19,41 @@ from ..mpl_helper import ZoomPan
 from .imexam import Imexam
 from .my_signal import MySignal
 
-default_im_rect = [0.0, 0.0, 1.0, 1.0]
-picked_im_rect = [0.0, 0.1, 0.8, 0.8]
-pick_rect = [[0.82, 0.1, 0.18, 0.25],
-             [0.82, 0.4, 0.18, 0.25],
-             [0.82, 0.7, 0.18, 0.25]]
-
-class Picker():
-    def __init__(self, ax, hdu, boxsize=30, model='gaussian', n_contour=10,
-                 surface_wire = False, mode='radial'):
-        self.hdu = hdu
-        self.ax = ax
-        self.fig = ax.get_figure()
-
-        self.boxsize = boxsize
-        self.model = model
-        self.n_contour = n_contour
-        self.surface_wire = surface_wire
-
-        self.pick = None
-        self.connected = None
-
-        self.output_panel = None
-
-        self.imexam = Imexam()
-        self.imexam.imexam_factory(self.ax, None)
-        self.imexam.set_hdu(self.hdu)
-
-        self.create_auxiliar_axes = MySignal() #args: output_panel
-        self.create_output_panel = MySignal()  #No Arguments
-        self.print_on_panel = MySignal()       #args: output_panel, message
-        self.clear_output_panel = MySignal()   #args: output_panel
-        self.imexam.create_plot_axes.connect(self._create_imexam_axes)
-        self.imexam.print_text.connect(self.print_text)
-
-    def _create_imexam_axes(self):
-        if self.output_panel is None:
-            self.output_panel = self.create_output_panel.emit()
-        return self.create_auxiliar_axes(self.output_panel)
-
-    def print_text(self, message):
-        if self.output_panel is None:
-            self.output_panel = self.create_output_panel.emit()
-        self.print_on_panel.emit(self.output_panel, message)
-
-    def onPress(self, event):
-        if event.inaxes == self.ax:
-            if event.button == 1:
-                self.pick = (event.xdata, event.ydata)
-                self.do_pick(self.pick)
-
-    def do_pick(self, pick):
-        if self.output_panel is None:
-            self.output_panel = self.create_output_panel.emit()
-        self.clear_output_panel.emit(self.output_panel)
-
-        ax = self.create_auxiliar_axes.emit(self.output_panel)
-        self.imexam.plot_ax = ax
-        self.imexam.do_option('r', pick[0], pick[1])
-        ax = self.create_auxiliar_axes.emit(self.output_panel)
-        self.imexam.plot_ax = ax
-        self.imexam.do_option('e', pick[0], pick[1])
-        ax = self.create_auxiliar_axes.emit(self.output_panel)
-        self.imexam.plot_ax = ax
-        self.imexam.do_option('s', pick[0], pick[1])
-        self.imexam.do_option('a', pick[0], pick[1])
-        self.imexam.plot_ax = None
-
-    def connect(self):
-        if self.connected == None:
-            self.connected = self.fig.canvas.mpl_connect('button_press_event',
-                                                         self.onPress)
-
-    def disconnect(self):
-        if self.connected is not None:
-            self.fig.canvas.mpl_disconnect(self.connected)
-            self.connected = None
-            self.fig.canvas.draw()
-
 class ImOutputPanel(QtWidgets.QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, hdu, parent=None):
         super(QtWidgets.QWidget, self).__init__(parent)
 
+        self.hdu = hdu
         self.create_layout()
+        self.setFixedWidth(200)
 
     def create_layout(self):
         self.layout = QtWidgets.QVBoxLayout(self)
-        self.setMinimumWidth(150)
+
+        self.mapfig = Figure(figsize=(2,2), dpi=90)
+        self.mapax = self.mapfig.gca()
+        self.immap = FigureCanvas(self.mapfig)
+        self.immap.setFixedSize(180,180)
 
         self.text = QtWidgets.QTextEdit(self)
         self.text.setReadOnly(True)
-        self.text.setMinimumSize(150,100)
+        self.text.setFixedSize(180,100)
+
         self.scroll = QtWidgets.QScrollArea(self)
+        self.scroll.setFixedSize(180,180)
+
+        self.layout.addWidget(self.immap)
         self.layout.addWidget(self.text)
         self.layout.addWidget(self.scroll)
         self.fig_layout = QtWidgets.QVBoxLayout(self.scroll)
 
     def add_axes(self):
-        fig = Figure(dpi=90)
+        fig = Figure(figsize=(2,2), dpi=90)
         ax = fig.gca()
         figcanvas = FigureCanvas(fig)
         FigureCanvas.setSizePolicy(figcanvas,
-                                   QtWidgets.QSizePolicy.Expanding,
-                                   QtWidgets.QSizePolicy.Expanding)
+                                   QtWidgets.QSizePolicy.Fixed,
+                                   QtWidgets.QSizePolicy.Fixed)
         self.fig_layout.addWidget(figcanvas)
         return ax
 
@@ -149,11 +81,13 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
 
         self.create_toolbar()
         self.create_plot()
+        self.create_output_panel()
 
         self.setMinimumSize(400, 300)
 
         self.layout.addWidget(self.toolbar)
         self.layout2.addWidget(self.figCanvas)
+        self.layout2.addWidget(self.output_panel)
         self.layout.addLayout(self.layout2)
 
     def create_toolbar(self) :
@@ -165,17 +99,7 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
         self.action_config_plot = QtWidgets.QAction(QtGui.QIcon.fromTheme('document-properties'),
                                              'Configure', self)
 
-        self.config_pick = QtWidgets.QAction(QtGui.QIcon.fromTheme('document-properties'),
-                                             'Configure Picker', self)
-
-        self.action_pick = QtWidgets.QAction(QtGui.QIcon.fromTheme('find-location-symbolic'),
-                                             'Pick Star', self)
-        self.action_pick.setCheckable(True)
-        self.action_pick.changed.connect(self.toogle_pick)
-
         self.toolbar.addAction(self.action_reset)
-        self.toolbar.addWidget(new_spacer())
-        self.toolbar.addAction(self.action_pick)
         self.toolbar.addWidget(new_spacer())
         self.toolbar.addAction(self.action_config_plot)
 
@@ -191,20 +115,18 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
         self._zpzoom = self._zp.zoom_factory(self.ax)
         self._zppan = self._zp.pan_factory(self.ax)
 
-        self._pick = Picker(self.ax, self.hdu)
-        self._pick.create_output_panel.connect(self._create_output_panel)
-        self._pick.create_auxiliar_axes.connect(self._create_plot_ax)
-        self._pick.print_on_panel.connect(self._write_on_panel)
-        self._pick.clear_output_panel.connect(self._clear_output_panel)
-
         self.plot_config = {'norm' : Normalize(*self._get_min_max()),
                             'cmap' : 'viridis'}
         self.plot_image()
 
-    def _create_output_panel(self):
-        self.output_panel = ImOutputPanel()
-        self.layout2.addWidget(self.output_panel)
-        return self.output_panel
+    def create_output_panel(self):
+        self.output_panel = ImOutputPanel(self.hdu)
+
+        self._imexam = Imexam()
+        self._imexam.imexam_factory(self.ax)
+        self._imexam.create_plot_axes.connect(self.output_panel.add_axes)
+        self._imexam.print_text.connect(self.output_panel.print_text)
+        self._imexam.set_hdu(self.hdu)
 
     def _clear_output_panel(self, panel):
         panel.clear()
@@ -218,12 +140,6 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
     def plot_image(self):
         im = self.ax.imshow(self.hdu.data, **self.plot_config, origin='lower')
         #cbar = self.fig.colorbar(im)
-
-    def toogle_pick(self):
-        if self._pick.connected is None:
-            self._pick.connect()
-        else:
-            self._pick.disconnect()
 
     def _get_min_max(self):
         vmin = np.max([0, np.min(self.hdu.data)])

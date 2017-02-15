@@ -1,6 +1,6 @@
 from distutils.core import setup
 
-setup(name='AstroJC-Utils',
+setup(name='astrojc',
       version='1.0',
       description='General astronomy codes used in my day-to-day',
       author='Julio Campagnolo',
