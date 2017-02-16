@@ -5,14 +5,15 @@ import sys
 from astropy.io import fits
 
 from .qt_helper import new_spacer
+from ..signal import MySignal
 
 hdu_icon_map = {'image': 'image-x-generic',
                 'table': 'x-office-spreadsheet',
                 'unkown': ''}
 
-class HDUTreeItem(QtWidgets.QWidget):
+class HDUTreeItem(QtWidgets.QGroupBox):
     def __init__(self, hdu, parent=None):
-        super(QtWidgets.QWidget, self).__init__(parent)
+        super(QtWidgets.QGroupBox, self).__init__(parent)
         self.hdu = hdu
         self.name = hdu.name
         if self.hdu.__class__.__name__ in ['PrimaryHDU', 'ImageHDU']:
@@ -39,52 +40,45 @@ class HDUTreeItem(QtWidgets.QWidget):
             self.shape = None
 
         self.create_widget()
-        self.def_open_data = None
-        self.def_open_header = None
+        self.def_open_data = MySignal()
+        self.def_open_header = MySignal()
 
     def create_widget(self):
         '''
         Creates the widget layout.
         '''
-        l1 = QtWidgets.QHBoxLayout()
-        l2 = QtWidgets.QVBoxLayout()
-        l3 = QtWidgets.QHBoxLayout()
-
-        name_label = QtWidgets.QLabel(self.name)
-        size_label = QtWidgets.QLabel(self.size_str)
-
-        l3.addWidget(name_label)
-        l3.addWidget(size_label)
-
-        class_name_label = QtWidgets.QLabel(self.hdu.__class__.__name__)
-        l2.addWidget(class_name_label)
-        l2.addLayout(l3)
+        layout = QtWidgets.QGridLayout(self)
 
         icon = QtWidgets.QLabel()
         icon.setPixmap(QtGui.QIcon.fromTheme(hdu_icon_map[self.type]).pixmap(48))
-        l1.addWidget(icon)
-        l1.addLayout(l2)
-        l1.addWidget(new_spacer())
+        layout.addWidget(icon, 0, 0, 3, 1)
+
+        label_layout = QtWidgets.QVBoxLayout()
+        label_layout.addWidget(QtWidgets.QLabel(self.hdu.__class__.__name__))
+        if self.name != '':
+            label_layout.addWidget(QtWidgets.QLabel(self.name))
+        label_layout.addWidget(QtWidgets.QLabel(self.size_str))
+        layout.addLayout(label_layout, 0, 1, 2, 3)
 
         self.open_data_button = QtWidgets.QPushButton()
-        self.open_data_button.setText('Open\nData')
+        self.open_data_button.setText('Open Data')
         self.open_data_button.clicked.connect(self.open_data_action)
         self.open_data_button.setEnabled(False)
         self.open_header_button = QtWidgets.QPushButton()
-        self.open_header_button.setText('Open\nHeader')
+        self.open_header_button.setText('Open Header')
         self.open_header_button.clicked.connect(self.open_header_action)
         self.open_header_button.setEnabled(False)
 
-        l1.addWidget(self.open_data_button)
-        l1.addWidget(self.open_header_button)
-
-        self.setLayout(l1)
+        layout.addWidget(self.open_data_button, 2, 1, 1, 1)
+        layout.addWidget(self.open_header_button, 2, 2, 1, 1)
 
     def set_open_data(self, open_data):
         '''
         Set the function to show the data
         '''
-        self.def_open_data = open_data
+        #FIXME: Get a less dummy way to enable/disable buttons if the function is
+        #connected.
+        self.def_open_data.connect(open_data)
         if self.def_open_data is not None:
             self.open_data_button.setEnabled(True)
         else:
@@ -94,17 +88,17 @@ class HDUTreeItem(QtWidgets.QWidget):
         '''
         Set the function to open the header
         '''
-        self.def_open_header = open_header
+        self.def_open_header.connect(open_header)
         if self.def_open_header is not None:
             self.open_header_button.setEnabled(True)
         else:
             self.open_header_button.setEnabled(False)
 
     def open_data_action(self):
-        self.def_open_data(self.hdu)
+        self.def_open_data.emit(self.hdu)
 
     def open_header_action(self):
-        self.def_open_header(self.hdu.header)
+        self.def_open_header.emit(self.hdu.header)
 
 class HDUFileSystemModel(QtWidgets.QWidget):
     def __init__(self, path, parent=None):
