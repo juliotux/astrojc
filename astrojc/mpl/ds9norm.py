@@ -45,11 +45,10 @@ def fast_limits(data, plo, phi):
         Tuple of floats.
             Approximate values of each percentile in data[component]
     """
-
-    shp = data.shape
-    view = tuple([slice(None, None, max(s / 50, 1)) for s in shp])
-    values = np.asarray(data)[view]
-    if ~np.isfinite(values).any():
+    #shp = data.shape
+    #view = tuple([slice(None, None, max(s / 50, 1)) for s in shp])
+    #values = np.asarray(data)[view]
+    if ~np.isfinite(data).any():
         return (0.0, 1.0)
 
     data = data[np.isfinite(data)]
@@ -248,7 +247,7 @@ class DS9Interacter(object):
         bias = float(x_pos - xlim[0])/(xlim[1]-xlim[0])
 
         #contrast is defined by the y axis
-        contrast = float(y_pos - ylim[0])/(ylim[1]-ylim[0])
+        contrast = (float(y_pos - ylim[0])/(ylim[1]-ylim[0]))
 
         self.norm.bias = bias
         self.norm.contrast = contrast

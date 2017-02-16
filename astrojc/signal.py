@@ -31,5 +31,5 @@ class MySignal(object):
         '''
         if self._emit_function is not None:
             return self._emit_function(*args, **kwargs)
-        raise NotConnectedException('This signal is not connected with any'
+        raise NotConnectedException('This signal is not connected with any '
                                     'emit function.')
