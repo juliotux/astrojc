@@ -15,9 +15,9 @@ from ..reducing.psf_fitting import (extract_data, xy2r,
                                     fit_gaussian_spatial, fit_gaussian_radial)
 
 from .qt_helper import new_spacer
-from ..mpl_helper import ZoomPan
-from .imexam import Imexam
-from .my_signal import MySignal
+from ..mpl.zoompan import ZoomPan
+from ..mpl.imexam import Imexam
+from ..signal import MySignal
 
 class ImOutputPanel(QtWidgets.QWidget):
     def __init__(self, hdu, parent=None):
@@ -30,10 +30,10 @@ class ImOutputPanel(QtWidgets.QWidget):
     def create_layout(self):
         self.layout = QtWidgets.QVBoxLayout(self)
 
-        self.mapfig = Figure(figsize=(2,2), dpi=90)
-        self.mapax = self.mapfig.gca()
-        self.immap = FigureCanvas(self.mapfig)
-        self.immap.setFixedSize(180,180)
+        #self.mapfig = Figure(figsize=(2,2), dpi=90)
+        #self.mapax = self.mapfig.gca()
+        #self.immap = FigureCanvas(self.mapfig)
+        #self.immap.setFixedSize(180,180)
 
         self.text = QtWidgets.QTextEdit(self)
         self.text.setReadOnly(True)
@@ -42,7 +42,7 @@ class ImOutputPanel(QtWidgets.QWidget):
         self.scroll = QtWidgets.QScrollArea(self)
         self.scroll.setFixedSize(180,180)
 
-        self.layout.addWidget(self.immap)
+        #self.layout.addWidget(self.immap)
         self.layout.addWidget(self.text)
         self.layout.addWidget(self.scroll)
         self.fig_layout = QtWidgets.QVBoxLayout(self.scroll)

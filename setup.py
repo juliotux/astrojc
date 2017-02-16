@@ -6,7 +6,7 @@ setup(name='astrojc',
       author='Julio Campagnolo',
       author_email='juliocampagnolo@gmail.com',
       url='https://www.on.br/',
-      packages=['astrojc', 'astrojc', 'astrojc.fitting', 'astrojc.io',
+      packages=['astrojc', 'astrojc.mpl', 'astrojc.fitting', 'astrojc.io',
                 'astrojc.reducing', 'astrojc.photometry', 'astrojc.spectra',
                 'astrojc.gui', 'astrojc.math']
      )

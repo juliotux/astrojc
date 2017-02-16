@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 
 from ..logging import log
-from .my_signal import MySignal
+from ..signal import MySignal
 
 class Imexam():
     '''
