@@ -44,7 +44,7 @@ class Imexam():
     def set_hdu(self, hdu):
         self.hdu = hdu
 
-    def imexam_factory(self, ax, plot_ax=None):
+    def imexam_connect(self, ax, plot_ax=None):
         '''
         Turn on the imexam in an axes instance.
 
@@ -59,6 +59,12 @@ class Imexam():
         self.fig = ax.get_figure()
         self.plot_ax = plot_ax
         self.connected = self.fig.canvas.mpl_connect('key_press_event', self.onKeyPress)
+
+    def disconnect(self):
+        self.fig.canvas.mpl_disconnect(self.connected)
+        self.ax = None
+        self.fig = None
+        self.plot_ax = None
 
     def _dummy_plot(self):
         self.plot_ax.plot(np.random.rand(5), np.random.rand(5))
@@ -169,6 +175,6 @@ def imexamine(hdu):
 
     ax.imshow(hdu.data)
 
-    imexam.imexam_factory(ax)
+    imexam.imexam_connect(ax)
 
     plt.show()

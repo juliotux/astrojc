@@ -1,55 +1,98 @@
-'''
-Module to mimic the normalization of images like DS9, with interacting with
-matplotlib.
+"""
+This file implements a matplotlib Normalize object
+which mimics the functionality of scaling functions in ds9
 
-Similar to glue-viz ds9norm package, but with interacting.
-'''
+The transformation from data values to normalized (0-1) display
+intensities are as follows:
+
+- Data to normal:
+   y = clip( (x - vmin) / (vmax - vmin), 0, 1)
+- normal to warped: Apply a monotonic, non-linear scaling, that preserves
+  the endpoints
+- warped to greyscale:
+  y = clip((x - bias) * contrast + 0.5, 0, 1)
+
+This code is almost all from https://github.com/glue-viz/ds9norm, but added
+interaction.
+"""
+
+# implementation details
+# The relevant ds9 code is located at saotk/frame/colorscale.C and
+# saotk/colorbar/colorbar.C
+#
+# As much as possible, we use verbose but inplace ufuncs to minimize
+# temporary arrays
 
 import numpy as np
 from matplotlib.colors import Normalize
 
-def get_clip(data, percentile_lo, percentile_hi):
-    '''
-    Get the values of a low and high percentiles of an array.
-    '''
-    d = np.asarray(data)
-    if ~np.isfinite(d).any():
-        return (0.0, 1.0)
 
-    d = d[np.isfinite(data)]
-    lo, hi = np.percentile(d, [percentile_lo, percentile_hi])
-    return lo, hi
-
-def norm(x, lo, hi):
-    '''
-    Clip the data with lo and hi limits.
-    '''
-    result = np.clip(x, lo, hi)
-    return result
-
-def cscale(x, bias, contrast):
-    '''
-    Apply bias and contrast scaling. Overwrite input.
+def fast_limits(data, plo, phi):
+    """Quickly estimate percentiles in an array,
+    using a downsampled version
 
     Parameters
     ----------
-        x : array
-            Values between 0 and 1
-        bias : float
-        contrast : float
+        data : array-like
+            The data to be used
+        plo : float
+            Lo percentile (0-100)
+        phi : float
+            High percentile (0-100)
+
+    Returns
+    -------
+        Tuple of floats.
+            Approximate values of each percentile in data[component]
+    """
+
+    shp = data.shape
+    view = tuple([slice(None, None, max(s / 50, 1)) for s in shp])
+    values = np.asarray(data)[view]
+    if ~np.isfinite(values).any():
+        return (0.0, 1.0)
+
+    data = data[np.isfinite(data)]
+    limits = (-np.inf, np.inf)
+    lo, hi = np.percentile(data, [plo, phi])
+    return lo, hi
+
+
+def norm(x, vmin, vmax):
+    """
+    Linearly scale data between [vmin, vmax] to [0, 1]. Clip outliers
+    """
+    result = (x - 1.0 * vmin)
+    result = np.divide(result, vmax - vmin, out=result)
+    result = np.clip(result, 0, 1, out=result)
+    return result
+
+
+def cscale(x, bias, contrast):
+    """
+    Apply bias and contrast scaling. Overwrite input
+
+    Parameters
+    ----------
+    x : array
+      Values between 0 and 1
+    bias : float
+    contrast : float
 
     Returns
     -------
     The input x, scaled inplace
-    '''
+    """
     x = np.subtract(x, bias, out=x)
     x = np.multiply(x, contrast, out=x)
     x = np.add(x, 0.5, out=x)
     x = np.clip(x, 0, 1, out=x)
     return x
 
+
 def linear_warp(x, vmin, vmax, bias, contrast):
-    return cscale(clip(x, vmin, vmax), bias, contrast)
+    return cscale(norm(x, vmin, vmax), bias, contrast)
+
 
 def log_warp(x, vmin, vmax, bias, contrast, exp=1000.0):
     black = x < vmin
@@ -63,6 +106,7 @@ def log_warp(x, vmin, vmax, bias, contrast, exp=1000.0):
     x = cscale(x, bias, contrast)
     return x
 
+
 def pow_warp(x, vmin, vmax, bias, contrast, exp=1000.0):
     x = norm(x, vmin, vmax)
     x = np.power(exp, x, out=x)
@@ -71,17 +115,20 @@ def pow_warp(x, vmin, vmax, bias, contrast, exp=1000.0):
     x = cscale(x, bias, contrast)
     return x
 
+
 def sqrt_warp(x, vmin, vmax, bias, contrast):
     x = norm(x, vmin, vmax)
     x = np.sqrt(x, out=x)
     x = cscale(x, bias, contrast)
     return x
 
+
 def squared_warp(x, vmin, vmax, bias, contrast):
     x = norm(x, vmin, vmax)
     x = np.power(x, 2, out=x)
     x = cscale(x, bias, contrast)
     return x
+
 
 def asinh_warp(x, vmin, vmax, bias, contrast):
     x = norm(x, vmin, vmax)
@@ -96,21 +143,40 @@ warpers = dict(linear=linear_warp,
                squared=squared_warp,
                arcsinh=asinh_warp)
 
-class DS9Norm(Normalize, object):
+
+# for mpl <= 1.1, Normalize is an old-style class
+# explicitly inheriting from object allows property to work
+class DS9Normalize(Normalize, object):
+    """
+    A Matplotlib Normalize object that implements DS9's image stretching
+
+    Parameters
+    ----------
+    stretch : 'linear' | 'log' | 'sqrt' | 'power' | 'squared' | 'arcsinh'
+        Which stretch function to use. Defaults to 'linear'
+    clip_lo : number
+        Where to clip the minimum image intensity. Expressed as a percentile
+        of the range of intensity values. Defaults to 0
+    clip_hi : number
+        Where to clip the maximum image intensity. Expressed as a percentile
+        of the range of intensity values. Defaults to 100
+    bias : float
+        The location of the middle-grey value,
+        relative to the [clip_lo, clip_hi] range. Defaults to 0.5
+    contrast : float
+        How quickly the scaled image transitions from black to white,
+        relative to the [clip_lo, clip_hi] range. Defaults to 1.0
+    """
+
     def __init__(self, stretch='linear',
                  bias=0.5, contrast=1.0,
                  clip_lo=0., clip_hi=100.):
-        self.ax = None
-        self.colorbar = None
-        self._stretch = stretch
+        super(DS9Normalize, self).__init__()
+        self.stretch = stretch
         self.bias = bias
         self.contrast = contrast
-        self._clip_lo = clip_lo
-        self._clip_hi = clip_hi
-
-        Normalize.__init__(self, None, None, None)
-
-        self.press = None
+        self.clip_lo = clip_lo
+        self.clip_hi = clip_hi
 
     @property
     def clip_lo(self):
@@ -141,45 +207,6 @@ class DS9Norm(Normalize, object):
                              (value, warpers.keys()))
         self._stretch = value
 
-    def get_bias_contrast(self, x_pos, y_pos):
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-
-        #bias is defined by the x axis
-        bias = float(x_pos - xlim[0])/(xlim[1]-xlim[0])
-        bias = np.abs(bias*(self._clip_hi - self._clip_lo)*self._clip_hi)
-
-        #contrast is defined by the y axis
-        contrast = float(y_pos - ylim[0])/(ylim[1]-ylim[0])
-
-        return bias, contrast
-
-    def ds9norm_factory(self, ax, colorbar=None):
-        self.ax = ax
-        self.colorbar = colorbar
-        self.fig = self.ax.get_figure()
-
-        self.fig.canvas.mpl_connect('button_press_event', self.onPress)
-        self.fig.canvas.mpl_connect('button_release_event', self.onRelease)
-        self.fig.canvas.mpl_connect('motion_notify_event', self.onMotion)
-
-    def onPress(self, event):
-        if event.inaxes != self.ax or event.button != 3:
-            return
-        self.press = event.xdata, event.ydata
-        self.bias, self.contrast = self.get_bias_contrast(event.xdata, event.ydata)
-
-    def onMotion(self, event):
-        if press == None:
-            return
-        if event.inaxes != self.ax:
-            return
-        self.bias, self.contrast = self.get_bias_contrast(event.xdata, event.ydata)
-
-    def onRelease(self, event):
-        self.press = None
-        self.ax.figure.canvas.draw()
-
     def autoscale(self, A):
         self.update_clip(A)
 
@@ -188,7 +215,7 @@ class DS9Norm(Normalize, object):
             self.update_clip(A)
 
     def update_clip(self, image):
-        self.vmin, self.vmax = get_clip(image, self._clip_lo, self._clip_hi)
+        self.vmin, self.vmax = fast_limits(image, self.clip_lo, self.clip_hi)
 
     def __call__(self, value, clip=False):
         self.autoscale_None(value)
@@ -205,4 +232,53 @@ class DS9Norm(Normalize, object):
 
         result = np.ma.MaskedArray(result, copy=False)
 
-        return value
+        return result
+
+class DS9Interacter(object):
+    def __init__(self):
+        self.press = None
+        self.norm = None
+        self.ax = None
+
+    def get_bias_contrast(self, x_pos, y_pos):
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+
+        #bias is defined by the x axis
+        bias = float(x_pos - xlim[0])/(xlim[1]-xlim[0])
+
+        #contrast is defined by the y axis
+        contrast = float(y_pos - ylim[0])/(ylim[1]-ylim[0])
+
+        self.norm.bias = bias
+        self.norm.contrast = contrast
+
+        return bias, contrast
+
+    def ds9norm_factory(self, ax, normalize):
+        self.ax = ax
+        self.norm = normalize
+        self.fig = self.ax.get_figure()
+
+        self.fig.canvas.mpl_connect('button_press_event', self.onPress)
+        self.fig.canvas.mpl_connect('button_release_event', self.onRelease)
+        self.fig.canvas.mpl_connect('motion_notify_event', self.onMotion)
+
+    def onPress(self, event):
+        if event.inaxes != self.ax or event.button != 3:
+            return
+        self.press = event.xdata, event.ydata
+        self.bias, self.contrast = self.get_bias_contrast(event.xdata, event.ydata)
+        self.fig.canvas.draw()
+
+    def onMotion(self, event):
+        if self.press == None:
+            return
+        if event.inaxes != self.ax:
+            return
+        self.bias, self.contrast = self.get_bias_contrast(event.xdata, event.ydata)
+        self.fig.canvas.draw()
+
+    def onRelease(self, event):
+        self.press = None
+        self.fig.canvas.draw()
