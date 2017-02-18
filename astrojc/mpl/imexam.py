@@ -8,6 +8,8 @@ from astropy.modeling import models, fitting
 from matplotlib import pyplot as plt
 import numpy as np
 
+from scipy.kdtree import cKDTree
+
 from ..logging import log
 from ..signal import MySignal
 from ..math.array import trim_array
