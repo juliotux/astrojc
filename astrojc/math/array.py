@@ -5,7 +5,7 @@ def _xy2r(x, y, data, xc, yc):
     r = np.sqrt((x-xc)**2 + (y-yc)**2)
     return np.ravel(r), np.ravel(data)
 
-def _trim_array(data, indices, box_size, position):
+def trim_array(data, indices, box_size, position):
     x, y = position
     dx = dy = float(box_size)/2
 
@@ -21,7 +21,7 @@ def _trim_array(data, indices, box_size, position):
 
 if use_jit:
     xy2r = autojit(_xy2r)
-    trim_array = autojit(_trim_array)
+    #trim_array = autojit(_trim_array)
 else:
     xy2r = _xy2r
-    trim_array = _trim_array
+    #trim_array = _trim_array

@@ -10,6 +10,18 @@ import numpy as np
 
 from ..logging import log
 from ..signal import MySignal
+from ..math.array import trim_array
+
+class ImexamConfig():
+    def __init__(self):
+        self.box_size = 15   #Box size for contour and surface plots and fitting
+
+        self.n_contours = 10 #Number of contours to be draw
+
+        self.cmap = 'viridis'#Cmap to use in plots
+
+        self.hist_bins = 12  #Number of bins of the histogram plot
+
 
 class Imexam():
     '''
@@ -25,26 +37,29 @@ class Imexam():
                          'r': (self.radial_profile, 'Return the radial profile plot'),
                          'h': (self.histogram, 'Return a histogram in the region around the cursor'),
                          'e': (self.contour, 'Return a contour plot in a region around the cursor'),
-                         's': (self.surface, 'Display a surface plot around the cursor location'),
-                         '2': (self.new_plot_axes, 'Make the next plot in a new axes'),}
+                         's': (self.surface, 'Display a surface plot around the cursor location')}
 
         self.ax = None
         self.fig = None
         self.hdu = None
         self.plot_ax= None
+        self.connected = None
 
-        self.create_plot_axes = MySignal()
         self.print_text = MySignal()
+
+        self.config = ImexamConfig()
 
     def _check_plot_ax(self):
         if self.plot_ax is None:
-            self.plot_ax = self.create_plot_axes.emit()
-        self.plot_ax.cla()
+            log.error('No plot axes connected.')
+        else:
+            self.plot_ax.cla()
 
     def set_hdu(self, hdu):
         self.hdu = hdu
+        log.info('HDU setted to %s' % str(self.hdu))
 
-    def imexam_connect(self, ax, plot_ax=None):
+    def connect(self, ax, plot_ax=None):
         '''
         Turn on the imexam in an axes instance.
 
@@ -57,24 +72,49 @@ class Imexam():
         '''
         self.ax = ax
         self.fig = ax.get_figure()
-        self.plot_ax = plot_ax
+        if plot_ax is not None:
+            self.plot_ax = plot_ax
         self.connected = self.fig.canvas.mpl_connect('key_press_event', self.onKeyPress)
 
+        log.info('Connecting imexam in slot %i' % self.connected)
+
     def disconnect(self):
-        self.fig.canvas.mpl_disconnect(self.connected)
-        self.ax = None
-        self.fig = None
-        self.plot_ax = None
+        if self.connected is not None:
+            log.info('Disconnecting imexam from slot %i' % self.connected)
+            self.fig.canvas.mpl_disconnect(self.connected)
+            self.ax = None
+            self.fig = None
+            self.plot_ax = None
+            self.connected = None
 
     def _dummy_plot(self):
-        self.plot_ax.plot(np.random.rand(5), np.random.rand(5))
+        self.plot_ax.plot(range(5), range(5))
+        self.plot_ax.set_xlabel('dummy x')
+        self.plot_ax.set_ylabel('dummy y')
+        self.plot_ax.set_title('dummy title')
+        self.plot_ax.set_xlim([0, 4])
+        self.plot_ax.set_ylim([0, 4])
+        self.draw()
+
+    def set_labels(self, title, xlabel, ylabel):
+        self.plot_ax.set_xlabel(xlabel)
+        self.plot_ax.set_ylabel(ylabel)
+        self.plot_ax.set_title(title)
+
+    def draw(self):
+        self.plot_ax.get_figure().tight_layout()
+        self.plot_ax.get_figure().canvas.draw()
 
     def onKeyPress(self, event):
+        log.debug('Key pressed: %s' % event.key)
         if event.inaxes != self.ax:
             return
         if self.hdu == None:
             return
-        self.do_option(event.key, event.xdata, event.ydata)
+        try:
+            self.do_option(event.key, event.xdata, event.ydata)
+        except Exception as e:
+            log.error(e)
 
     def do_option(self, key, x, y):
         if key not in self.commands.keys():
@@ -134,27 +174,33 @@ class Imexam():
         `h` key from imexam
         '''
         self._check_plot_ax()
-        self._dummy_plot()
+        data, xdata, ydata = trim_array(self.hdu.data, np.indices(self.hdu.data.shape),
+                                        self.config.box_size, (x, y))
+        self.plot_ax.hist(data.ravel(), self.config.hist_bins)
+        self.set_labels('Histogram', 'Value', 'Number')
+        self.draw()
 
     def contour(self, x, y):
         '''
         `e` key from imexam
         '''
         self._check_plot_ax()
-        self._dummy_plot()
+        data, xdata, ydata = trim_array(self.hdu.data, np.indices(self.hdu.data.shape),
+                                        self.config.box_size, (x, y))
+        self.plot_ax.contour(xdata, ydata, data, self.config.n_contours)
+        self.set_labels('Contour', 'Column', 'Line')
+        self.draw()
 
     def surface(self, x, y):
         '''
         `s` key from imexam
         '''
         self._check_plot_ax()
-        self._dummy_plot()
-
-    def new_plot_axes(self, x, y):
-        '''
-        `2` key from imexam
-        '''
-        self.plot_ax = self.create_plot_axes.emit()
+        #data, xdata, ydata = trim_array(self.hdu.data, np.indices(self.hdu.data.shape),
+        #                                self.config.box_size, (x, y))
+        #self.plot_ax.plot_surface(xdata, ydata, data, rstride=1, cstride=1,
+        #                          cmap=self.config.cmap, alpha=0.6)
+        log.error('Surface plot not implemented yet.')
 
 def imexamine(hdu):
     '''
@@ -162,19 +208,19 @@ def imexamine(hdu):
     HDUImage instance.
     '''
     def _create_plot_ax():
-        fig = plt.gcf()
-        return fig.gca()
+        fig = plt.Figure()
+        return fig.add_subplot(111)
 
     imexam = Imexam()
     imexam.set_hdu(hdu)
 
-    imexam.create_plot_axes.connect(_create_plot_ax)
+    imexam.plot_ax = _create_plot_ax()
     imexam.print_text.connect(print)
 
     ax = _create_plot_ax()
 
     ax.imshow(hdu.data)
 
-    imexam.imexam_connect(ax)
+    imexam.connect(ax)
 
     plt.show()
