@@ -9,11 +9,6 @@ from matplotlib.figure import Figure
 from matplotlib.colors import LogNorm, Normalize, PowerNorm
 import numpy as np
 
-
-from ..reducing.psf_fitting import (extract_data, xy2r,
-                                    fit_moffat_spatial, fit_moffat_radial,
-                                    fit_gaussian_spatial, fit_gaussian_radial)
-
 from .qt_helper import new_spacer
 from ..mpl.zoompan import ZoomPan
 from ..mpl.imexam import Imexam

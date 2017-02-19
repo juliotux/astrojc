@@ -34,17 +34,29 @@ class FindAdapter():
         if not use_photutils and not use_sep:
             raise ImportError('No source finder package available.')
 
+        if use_photutils:
+            import photutils
+            self.photutils = photutils
+        if use_sep:
+            import sep
+            self.sep = sep
+
         self.config = FindAdapterParameters()
 
         self.find_dtype = np.dtype([('x', 'f8'), ('y', 'f8'), ('peak', 'f8'),
                                     ('flux', 'f8'), ('roundness', 'f8'),
                                     ('sharpness', 'f8')])
 
+        #TODO: Temporary, while don't implement the priority order
+        self.find_peaks = self.photutils_find_peak
+        self.source_find = self.photutils_daofind_source_find
+        self.background = self.photutils_mmm_background
+
     def photutils_mmm_background(self, data):
-        back = photutils.MMMBackground(photutils.SigmaClip(sigma=self.config.background_sigma_clip,
+        back = self.photutils.MMMBackground(photutils.SigmaClip(sigma=self.config.background_sigma_clip,
                                                            iters=self.config.background_iters))
         background = back.calc_background(data)
-        bkgrms = photutils.StdBackgroundRMS(photutils.SigmaClip(sigma=self.config.background_sigma_clip,
+        bkgrms = self.photutils.StdBackgroundRMS(photutils.SigmaClip(sigma=self.config.background_sigma_clip,
                                                                 iters=self.config.background_iters))
         rms = bkgrms.calc_background_rms(data)
 
@@ -53,7 +65,8 @@ class FindAdapter():
     def photutils_daofind_source_find(self, data, snr):
         bkg, rms = self.photutils_mmm_background(data)
         thresh = bkg + snr*rms
-        daofind = DAOStarFinder(fwhm=self.config.detection_fwhm, threshold=thresh,
+        daofind = self.photutils.DAOStarFinder(fwhm=self.config.detection_fwhm,
+                                threshold=thresh,
                                 sharplo=self.config.detection_sharplo,
                                 shaprhi=self.config.detection_sharphi,
                                 roundlo=self.config.detection_roundlo,
@@ -67,7 +80,7 @@ class FindAdapter():
     def photutils_find_peak(self, data):
         bkg, rms = self.photutils_mmm_background(data)
         thresh = bkg + snr*rms
-        res = photutils.find_peaks(data, thresh, box_size=self.config.detection_box_size)
+        res = self.photutils.find_peaks(data, thresh, box_size=self.config.detection_box_size)
         res_arr = tuple([res[i] for i in ('x_peak', 'y_peak', 'peak_value')])
         nan_array = [np.nan]*len(res)
 

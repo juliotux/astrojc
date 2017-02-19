@@ -59,10 +59,7 @@ class FitsExplorerMW(QtWidgets.QMainWindow):
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
-    app.setApplicationName('FitsExplorer')
-
     mw = FitsExplorerMW()
-
     mw.show()
 
     sys.exit(app.exec_())

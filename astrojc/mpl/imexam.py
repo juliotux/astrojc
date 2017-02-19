@@ -8,11 +8,12 @@ from astropy.modeling import models, fitting
 from matplotlib import pyplot as plt
 import numpy as np
 
-from scipy.kdtree import cKDTree
+from scipy.spatial import cKDTree
 
 from ..logging import log
 from ..signal import MySignal
 from ..math.array import trim_array
+from ..photometry.source_find import FindAdapter
 
 class ImexamConfig():
     def __init__(self):
@@ -50,6 +51,8 @@ class Imexam():
         self.print_text = MySignal()
 
         self.config = ImexamConfig()
+
+        self.finder = FindAdapter(use_photutils=True, use_sep=False)
 
     def _check_plot_ax(self):
         if self.plot_ax is None:
@@ -97,6 +100,10 @@ class Imexam():
         self.plot_ax.set_xlim([0, 4])
         self.plot_ax.set_ylim([0, 4])
         self.draw()
+
+    def _extract_data(self, x, y):
+        return trim_array(self.hdu.data, np.indices(self.hdu.data.shape),
+                          self.config.box_size, (x, y))
 
     def set_labels(self, title, xlabel, ylabel):
         self.plot_ax.set_xlabel(xlabel)
@@ -169,15 +176,23 @@ class Imexam():
         `r` key from imexam
         '''
         self._check_plot_ax()
-        self._dummy_plot()
+        data, xdata, ydata = self._extract_data(x, y)
+        peaks = self.finder.find_peaks(data)
+
+        kdtree = cKDTree(list(zip(peaks['x'], peaks['y'])))
+        d, idx = kdtree.query((x, y), 1)
+        x0, y0 = peaks[idx]['x'], peaks[idx]['y']
+
+        self.plot_ax.contour(xdata, ydata, data, self.config.n_contours)
+        self.plot_ax.plot(x0, y0, 'ko')
+        self.draw()
 
     def histogram(self, x, y):
         '''
         `h` key from imexam
         '''
         self._check_plot_ax()
-        data, xdata, ydata = trim_array(self.hdu.data, np.indices(self.hdu.data.shape),
-                                        self.config.box_size, (x, y))
+        data, xdata, ydata = self._extract_data(x, y)
         self.plot_ax.hist(data.ravel(), self.config.hist_bins)
         self.set_labels('Histogram', 'Value', 'Number')
         self.draw()
@@ -187,8 +202,7 @@ class Imexam():
         `e` key from imexam
         '''
         self._check_plot_ax()
-        data, xdata, ydata = trim_array(self.hdu.data, np.indices(self.hdu.data.shape),
-                                        self.config.box_size, (x, y))
+        data, xdata, ydata = self._extract_data(x, y)
         self.plot_ax.contour(xdata, ydata, data, self.config.n_contours)
         self.set_labels('Contour', 'Column', 'Line')
         self.draw()
