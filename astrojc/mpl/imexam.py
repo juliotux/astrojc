@@ -250,9 +250,11 @@ class Imexam():
             dist, data = xy2r(xdata, ydata, data, x0, y0)
 
             self.plot_ax.plot(dist, data, 'k-')
-            self.plotted.append(self.ax.plot([x0, x], [y0, y], self.config.line_plot_fmt,
-                                             label='imexam_vector_point',
-                                             linewidth=self.config.line_plot_width))
+            self.plotted.append(self.ax.annotate("", xy=(x0, y0), xytext=(x1, y1),
+                                                 arrowprops={arrowstyle="<-",
+                                                             connectionstyle="arc3",
+                                                             color=self.config.line_plot_fmt[0],
+                                                             linewidth=self.config.line_plot_width})
             self.plotted.append(self.ax.plot([x0, x], [y0, y], self.config.point_plot_fmt,
                                              label='imexam_vector_point',
                                              markersize = self.config.point_plot_size))
