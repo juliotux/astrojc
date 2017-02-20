@@ -22,7 +22,7 @@ class FigConfigPanel(QtWidgets.QWidget):
         self.ax = ax
         self.ds9 = ds9normalize
 
-        self.setFixedWidth(200)
+        self.setFixedWidth(250)
 
 class ImexamPanel(QtWidgets.QWidget):
     def __init__(self, hdu, ax, imexam, parent=None):
@@ -31,10 +31,10 @@ class ImexamPanel(QtWidgets.QWidget):
         self.ax = ax
         self.imexam = imexam
 
-        self.plot_fig = Figure(dpi=50)
+        self.plot_fig = Figure(dpi=60)
         self.plot_ax = self.plot_fig.add_subplot(111)
 
-        self.setFixedWidth(200)
+        self.setFixedWidth(250)
 
         self.clear_button = QtWidgets.QPushButton('Clear All')
         self.clear_button.clicked.connect(self._on_clear)
@@ -42,7 +42,11 @@ class ImexamPanel(QtWidgets.QWidget):
         self.layout = QtWidgets.QVBoxLayout(self)
         self.text = QtWidgets.QTextEdit()
         self.fig_canvas = FigureCanvas(self.plot_fig)
-        self.fig_canvas.setFixedSize(200,200)
+        self.fig_canvas.setMinimumSize(200,200)
+        policy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred,
+                                       QtWidgets.QSizePolicy.Preferred)
+        policy.setHeightForWidth(True)
+        self.fig_canvas.setSizePolicy(policy)
 
         self.layout.addWidget(self.fig_canvas)
         self.layout.addWidget(self.text)
@@ -74,13 +78,14 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
 
         self.sidebar = QtWidgets.QTabWidget()
         self.sidebar.setTabsClosable(True)
-        self.sidebar.setFixedWidth(200)
+        self.sidebar.setFixedWidth(250)
+        self.sidebar.tabCloseRequested.connect(self.close_tab)
         self.sidebar_widget = {}
 
         self.create_toolbar()
         self.create_plot()
 
-        self.setMinimumSize(600, 400)
+        self.setMinimumSize(700, 500)
 
         self.layout.addWidget(self.toolbar, 0, 0, 1, 2)
         self.layout.addWidget(self.figCanvas, 1, 0, 1, 1)
@@ -146,6 +151,8 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
             self.sidebar.addTab(self.sidebar_widget[mode], self.sidebar_names[mode])
         if not self.toolbar_buttons[mode].isChecked():
             self.toolbar_buttons[mode].setChecked(True)
+        if mode == 'imexam':
+            self.sidebar_widget['imexam'].connect_imexam(self.ax)
         self.update_sidebar()
 
     def remove_sidebar_mode(self, mode):
@@ -153,7 +160,14 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
             self.sidebar.removeTab(self.sidebar.indexOf(self.sidebar_widget[mode]))
         if self.toolbar_buttons[mode].isChecked():
             self.toolbar_buttons[mode].setChecked(False)
+        if mode == 'imexam':
+            self.sidebar_widget['imexam'].disconnect_imexam()
         self.update_sidebar()
+
+    def close_tab(self, index):
+        for i in self.sidebar_widget.keys():
+            if self.sidebar_widget[i] == self.sidebar.widget(index):
+                self.remove_sidebar_mode(i)
 
     def _on_config_changed(self, checked=False):
         if not checked:
@@ -163,11 +177,9 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
 
     def _on_imexam_changed(self, checked=False):
         if not checked:
-            self.sidebar_widget['imexam'].disconnect_imexam()
             self.remove_sidebar_mode('imexam')
         else:
             self.add_sidebar_mode('imexam')
-            self.sidebar_widget['imexam'].connect_imexam(self.ax)
 
     def plot_image(self):
         im = self.ax.imshow(self.hdu.data, norm=self._ds9, origin='lower')
