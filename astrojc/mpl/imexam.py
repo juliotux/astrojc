@@ -64,7 +64,10 @@ class Imexam():
         else:
             self.plot_ax.cla()
         for i in self.plotted:
-            i[0].remove()
+            try:
+                i[0].remove()
+            except:
+                i.remove()
             del i
         self.plotted = []
 
@@ -249,12 +252,12 @@ class Imexam():
             data = self.hdu.data[ydata.astype('int16'), xdata.astype('int16')]
             dist, data = xy2r(xdata, ydata, data, x0, y0)
 
-            self.plot_ax.plot(dist, data, 'k-')
-            self.plotted.append(self.ax.annotate("", xy=(x0, y0), xytext=(x1, y1),
+            self.plot_ax.plot(dist, data)
+            self.plotted.append(self.ax.annotate("", xy=(x0, y0), xytext=(x, y),
                                                  arrowprops={'arrowstyle' : "<-",
                                                              'connectionstyle' : "arc3",
                                                              'color' : self.config.line_plot_fmt[0],
-                                                             'linewidth' : self.config.line_plot_width})
+                                                             'linewidth' : self.config.line_plot_width}))
             self.plotted.append(self.ax.plot([x0, x], [y0, y], self.config.point_plot_fmt,
                                              label='imexam_vector_point',
                                              markersize = self.config.point_plot_size))
