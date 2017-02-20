@@ -12,19 +12,19 @@ from scipy.spatial import cKDTree
 
 from ..logging import log
 from ..signal import MySignal
-from ..math.array import trim_array
+from ..math.array import trim_array, xy2r
 from ..photometry.source_find import FindAdapter
 
 class ImexamConfig():
     def __init__(self):
         self.box_size = 15   #Box size for contour and surface plots and fitting
-
         self.n_contours = 10 #Number of contours to be draw
-
         self.cmap = 'viridis'#Cmap to use in plots
-
         self.hist_bins = 12  #Number of bins of the histogram plot
-
+        self.point_plot_fmt = 'wo'
+        self.point_plot_size = 6
+        self.line_plot_fmt = 'w-'
+        self.line_plot_width = 2
 
 class Imexam():
     '''
@@ -40,13 +40,17 @@ class Imexam():
                          'r': (self.radial_profile, 'Return the radial profile plot'),
                          'h': (self.histogram, 'Return a histogram in the region around the cursor'),
                          'e': (self.contour, 'Return a contour plot in a region around the cursor'),
-                         's': (self.surface, 'Display a surface plot around the cursor location')}
+                         's': (self.surface, 'Display a surface plot around the cursor location'),
+                         'v': (self.vector, 'Displays a vector plot between 2 selected points')}
 
         self.ax = None
         self.fig = None
         self.hdu = None
         self.plot_ax= None
         self.connected = None
+        self.press = None
+
+        self.plotted = []
 
         self.print_text = MySignal()
 
@@ -59,6 +63,10 @@ class Imexam():
             log.error('No plot axes connected.')
         else:
             self.plot_ax.cla()
+        for i in self.plotted:
+            i[0].remove()
+            del i
+        self.plotted = []
 
     def set_hdu(self, hdu):
         self.hdu = hdu
@@ -113,6 +121,7 @@ class Imexam():
     def draw(self):
         self.plot_ax.get_figure().tight_layout()
         self.plot_ax.get_figure().canvas.draw()
+        self.ax.get_figure().canvas.draw()
 
     def onKeyPress(self, event):
         log.debug('Key pressed: %s' % event.key)
@@ -135,57 +144,58 @@ class Imexam():
         `a` key from imexam
         '''
         self.print_text.emit('x: %.1f, y:%.1f' % (x, y))
+        log.error('Aperture photometry not implemented yet.')
 
     def line_fit(self, x, y):
         '''
         `j` key from imexam
         '''
         self._check_plot_ax()
-        self._dummy_plot()
+        log.error('Line fit not implemented yet.')
 
     def column_fit(self, x, y):
         '''
         `k` key from imexam
         '''
         self._check_plot_ax()
-        self._dummy_plot()
+        log.error('Column fit not implemented yet.')
 
     def report_stat(self, x, y):
         '''
         `m` key from imexam
         '''
         self._check_plot_ax()
-        self._dummy_plot()
+        log.error('Statistics report not implemented yet.')
 
     def plot_line(self, x, y):
         '''
         `l` key from imexam
         '''
         self._check_plot_ax()
-        self._dummy_plot()
+        lin = np.int(y)
+        data = self.hdu.data[lin,:]
+
+        self.plot_ax.plot(data)
+        self.set_labels('Line Plot', 'Column', 'Value')
+        self.draw()
 
     def plot_column(self, x, y):
         '''
         `c` key from imexam
         '''
         self._check_plot_ax()
-        self._dummy_plot()
+        col = np.int(x)
+        data = self.hdu.data[:,col]
+
+        self.plot_ax.plot(data)
+        self.set_labels('Column Plot', 'Line', 'Value')
+        self.draw()
 
     def radial_profile(self, x, y):
         '''
         `r` key from imexam
         '''
-        self._check_plot_ax()
-        data, xdata, ydata = self._extract_data(x, y)
-        peaks = self.finder.find_peaks(data)
-
-        kdtree = cKDTree(list(zip(peaks['x'], peaks['y'])))
-        d, idx = kdtree.query((x, y), 1)
-        x0, y0 = peaks[idx]['x'], peaks[idx]['y']
-
-        self.plot_ax.contour(xdata, ydata, data, self.config.n_contours)
-        self.plot_ax.plot(x0, y0, 'ko')
-        self.draw()
+        log.error('Radial profile plot not implemented yet.')
 
     def histogram(self, x, y):
         '''
@@ -217,6 +227,39 @@ class Imexam():
         #self.plot_ax.plot_surface(xdata, ydata, data, rstride=1, cstride=1,
         #                          cmap=self.config.cmap, alpha=0.6)
         log.error('Surface plot not implemented yet.')
+
+    def vector(self, x, y):
+        self._check_plot_ax()
+        if self.press is None:
+            self.press = ('v', x, y)
+            self.plotted.append(self.ax.plot(x, y, self.config.point_plot_fmt,
+                                             label='imexam_vector_point',
+                                             markersize = self.config.point_plot_size))
+            self.plot_ax.text(0, 0, 'Press \'v\' again.', ha='center', va='center',
+                              fontsize=18)
+            self.plot_ax.set_xlim(-1, 1)
+            self.plot_ax.set_ylim(-1, 1)
+            self.draw()
+        elif self.press[0] == 'v':
+            key, x0, y0 = self.press
+            self.press = None
+
+            n = int(np.hypot(x-x0, y-y0))
+            xdata, ydata = np.linspace(x0, x, n), np.linspace(y0, y, n)
+            data = self.hdu.data[ydata.astype('int16'), xdata.astype('int16')]
+            dist, data = xy2r(xdata, ydata, data, x0, y0)
+
+            self.plot_ax.plot(dist, data, 'k-')
+            self.plotted.append(self.ax.plot([x0, x], [y0, y], self.config.line_plot_fmt,
+                                             label='imexam_vector_point',
+                                             linewidth=self.config.line_plot_width))
+            self.plotted.append(self.ax.plot([x0, x], [y0, y], self.config.point_plot_fmt,
+                                             label='imexam_vector_point',
+                                             markersize = self.config.point_plot_size))
+            self.set_labels('Vector Plot', 'Distance', 'Value')
+            self.draw()
+        else:
+            log.error('You changed the pressing key. Clearing!')
 
 def imexamine(hdu):
     '''
