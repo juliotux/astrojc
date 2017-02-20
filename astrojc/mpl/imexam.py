@@ -103,15 +103,6 @@ class Imexam():
             self.plot_ax = None
             self.connected = None
 
-    def _dummy_plot(self):
-        self.plot_ax.plot(range(5), range(5))
-        self.plot_ax.set_xlabel('dummy x')
-        self.plot_ax.set_ylabel('dummy y')
-        self.plot_ax.set_title('dummy title')
-        self.plot_ax.set_xlim([0, 4])
-        self.plot_ax.set_ylim([0, 4])
-        self.draw()
-
     def _extract_data(self, x, y):
         return trim_array(self.hdu.data, np.indices(self.hdu.data.shape),
                           self.config.box_size, (x, y))
