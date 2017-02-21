@@ -8,6 +8,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.colors import LogNorm, Normalize, PowerNorm
 import numpy as np
+from functools import partial
 
 from .qt_helper import new_spacer
 from ..mpl.zoompan import ZoomPan
@@ -23,6 +24,9 @@ class FigConfigPanel(QtWidgets.QWidget):
         self.ds9 = ds9normalize
 
         self.setFixedWidth(250)
+
+        self.start = MySignal(raise_error=False)
+        self.stop = MySignal(raise_error=False)
 
 class ImexamPanel(QtWidgets.QWidget):
     def __init__(self, hdu, ax, imexam, parent=None):
@@ -53,6 +57,9 @@ class ImexamPanel(QtWidgets.QWidget):
         self.layout.addWidget(self.clear_button)
 
         self.imexam.print_text.connect(self.print_text)
+
+        self.start = MySignal(raise_error=False)
+        self.stop = MySignal(raise_error=False)
 
     def connect_imexam(self, ax):
         self.imexam.connect(ax, self.plot_ax)
@@ -142,6 +149,8 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
 
         self.sidebar_widget['config'] = FigConfigPanel(self.hdu, self.ax, self._ds9)
         self.sidebar_widget['imexam'] = ImexamPanel(self.hdu, self.ax, self._imexam)
+        self.sidebar_widget['imexam'].start.connect(partial(self.sidebar_widget['imexam'].connect_imexam, self.ax))
+        self.sidebar_widget['imexam'].stop.connect(self.sidebar_widget['imexam'].disconnect_imexam)
 
         self.sidebar_names = {'config': 'Configure',
                               'imexam': 'Examine'}
@@ -149,25 +158,24 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
     def add_sidebar_mode(self, mode):
         if self.sidebar.indexOf(self.sidebar_widget[mode]) == -1:
             self.sidebar.addTab(self.sidebar_widget[mode], self.sidebar_names[mode])
+            self.sidebar_widget[mode].start()
         if not self.toolbar_buttons[mode].isChecked():
             self.toolbar_buttons[mode].setChecked(True)
-        if mode == 'imexam':
-            self.sidebar_widget['imexam'].connect_imexam(self.ax)
         self.update_sidebar()
 
     def remove_sidebar_mode(self, mode):
         if self.sidebar.indexOf(self.sidebar_widget[mode]) != -1:
             self.sidebar.removeTab(self.sidebar.indexOf(self.sidebar_widget[mode]))
+            self.sidebar_widget[mode].stop()
         if self.toolbar_buttons[mode].isChecked():
             self.toolbar_buttons[mode].setChecked(False)
-        if mode == 'imexam':
-            self.sidebar_widget['imexam'].disconnect_imexam()
         self.update_sidebar()
 
     def close_tab(self, index):
         for i in self.sidebar_widget.keys():
             if self.sidebar_widget[i] == self.sidebar.widget(index):
                 self.remove_sidebar_mode(i)
+        self.fig.canvas.draw()
 
     def _on_config_changed(self, checked=False):
         if not checked:

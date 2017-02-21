@@ -43,6 +43,8 @@ class HDUTreeItem(QtWidgets.QGroupBox):
         self.def_open_data = MySignal()
         self.def_open_header = MySignal()
 
+        self.update_buttons()
+
     def create_widget(self):
         '''
         Creates the widget layout.
@@ -72,33 +74,71 @@ class HDUTreeItem(QtWidgets.QGroupBox):
         layout.addWidget(self.open_data_button, 2, 1, 1, 1)
         layout.addWidget(self.open_header_button, 2, 2, 1, 1)
 
+    def update_buttons(self):
+        if self.def_open_data.is_connected:
+            self.open_data_button.setEnabled(True)
+        else:
+            self.open_data_button.setEnabled(False)
+
+        if self.def_open_header.is_connected:
+            self.open_header_button.setEnabled(True)
+        else:
+            self.open_header_button.setEnabled(False)
+
     def set_open_data(self, open_data):
         '''
         Set the function to show the data
         '''
-        #FIXME: Get a less dummy way to enable/disable buttons if the function is
-        #connected.
         self.def_open_data.connect(open_data)
-        if self.def_open_data is not None:
-            self.open_data_button.setEnabled(True)
-        else:
-            self.open_data_button.setEnabled(False)
+        self.update_buttons()
 
     def set_open_header(self, open_header):
         '''
         Set the function to open the header
         '''
         self.def_open_header.connect(open_header)
-        if self.def_open_header is not None:
-            self.open_header_button.setEnabled(True)
-        else:
-            self.open_header_button.setEnabled(False)
+        self.update_buttons()
 
     def open_data_action(self):
         self.def_open_data.emit(self.hdu)
 
     def open_header_action(self):
         self.def_open_header.emit(self.hdu.header)
+
+class HDUListView(QtWidgets.QListWidget):
+    def __init__(self, parent=None):
+        super(QtWidgets.QListWidget, self).__init__(parent)
+        self.filepath = None
+        self.open_data = MySignal()
+        self.open_header = MySignal()
+
+    def add_fitsfile(self, fname):
+        '''
+        Add all HDUs from a fits file to the list.
+        '''
+        self.clear()
+        try:
+            f = fits.open(fname)
+            j = 0
+            for i in f:
+                i.position = j
+                self.add_hdu(i)
+                j += 1
+            self.filepath = fname
+        except:
+            pass
+
+    def add_hdu(self, hdu):
+        '''
+        Add a HDU instance to the list.
+        '''
+        newitem = QtWidgets.QListWidgetItem(self)
+        hduitem = HDUTreeItem(hdu)
+        newitem.setSizeHint(hduitem.sizeHint())
+        self.addItem(newitem)
+        self.setItemWidget(newitem, hduitem)
+        hduitem.set_open_data(self.open_data._emit_function)
+        hduitem.set_open_header(self.open_header._emit_function)
 
 class HDUFileSystemModel(QtWidgets.QWidget):
     def __init__(self, path, parent=None):
@@ -114,67 +154,18 @@ class HDUFileSystemModel(QtWidgets.QWidget):
         self.filetree.setRootIndex(self.indexRoot)
         self.filetree.clicked.connect(self.on_filetree_clicked)
 
-        self.hdulist = None
+        self.on_fits_clicked = MySignal()
 
         self.layout = QtWidgets.QVBoxLayout(self)
         self.layout.addWidget(self.filetree)
-        self.layout.addWidget(self.hdulist)
 
     def on_filetree_clicked(self, index):
         indexItem = self.dirmodel.index(index.row(), 0, index.parent())
         if not self.dirmodel.isDir(indexItem):
-            if self.hdulist is None:
-                raise ValueError('No HDUListView is connected. Use `setHDUListView`'
-                                 'To connect one.')
-            self.hdulist.add_fitsfile(self.dirmodel.filePath(indexItem))
+            if self.on_fits_clicked.is_connected:
+                self.on_fits_clicked(self.dirmodel.filePath(indexItem))
 
     def set_root_path(self, path):
         self.pathRoot = path
         self.dirmodel.setRootPath(path)
         self.indexRoot = self.dirmodel.index(self.dirmodel.rootPath())
-
-    def setHDUListView(self, hdulist):
-        self.hdulist = hdulist
-
-class HDUListView(QtWidgets.QListWidget):
-    def __init__(self, parent=None):
-        super(QtWidgets.QListWidget, self).__init__(parent)
-        self.def_open_data = None
-        self.def_open_header = None
-
-    def add_fitsfile(self, fname):
-        '''
-        Add all HDUs from a fits file to the list.
-        '''
-        self.clear()
-        try:
-            f = fits.open(fname)
-            for i in f:
-                self.add_hdu(i)
-        except Exception as e:
-            print(e)
-            pass
-
-    def add_hdu(self, hdu):
-        '''
-        Add a HDU instance to the list.
-        '''
-        newitem = QtWidgets.QListWidgetItem(self)
-        hduitem = HDUTreeItem(hdu)
-        newitem.setSizeHint(hduitem.sizeHint())
-        self.addItem(newitem)
-        self.setItemWidget(newitem, hduitem)
-        hduitem.set_open_data(self.def_open_data)
-        hduitem.set_open_header(self.def_open_header)
-
-    def set_open_data(self, open_data):
-        '''
-        Set the function to show the data
-        '''
-        self.def_open_data = open_data
-
-    def set_open_header(self, open_header):
-        '''
-        Set the function to open the header
-        '''
-        self.def_open_header = open_header

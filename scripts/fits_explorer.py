@@ -8,6 +8,7 @@ from qtpy import QtCore, QtWidgets
 from astrojc.gui.qt_2dimage_plotter import HDUFigureCanvas2D
 from astrojc.gui.qt_fitsfiletree import HDUFileSystemModel, HDUListView
 from astrojc.gui.qt_fitstable import HDUTableWidget
+from os import path
 
 from astropy.io import fits
 
@@ -15,6 +16,7 @@ class ViewWidget(QtWidgets.QTabWidget):
     def __init__(self, parent=None):
         super(QtWidgets.QTabWidget, self).__init__(parent)
         self.setTabsClosable(True)
+        self.tabCloseRequested.connect(self.removeTab)
 
     def add_hdu_tab(self, hdu, name):
         if isinstance(hdu, (fits.PrimaryHDU, fits.ImageHDU)):
@@ -40,9 +42,9 @@ class FitsExplorerMW(QtWidgets.QMainWindow):
         self.hdulist_dock.setAllowedAreas(QtCore.Qt.LeftDockWidgetArea | QtCore.Qt.RightDockWidgetArea)
 
         self.hdulist_view = HDUListView(self.hdulist_dock)
-        self.hdulist_view.set_open_data(self.open_data)
+        self.hdulist_view.open_data.connect(self.open_data)
         self.file_tree = HDUFileSystemModel(root, self.file_tree_dock)
-        self.file_tree.setHDUListView(self.hdulist_view)
+        self.file_tree.on_fits_clicked.connect(self.hdulist_view.add_fitsfile)
 
         self.file_tree_dock.setWidget(self.file_tree)
         self.hdulist_dock.setWidget(self.hdulist_view)
@@ -54,8 +56,13 @@ class FitsExplorerMW(QtWidgets.QMainWindow):
         self.fits_viewer = ViewWidget(self)
         self.setCentralWidget(self.fits_viewer)
 
-    def open_data(self, hdu):
-        self.fits_viewer.add_hdu_tab(hdu, 'testing data')
+    def open_data(self, hdu, name=None):
+        if name is None:
+            try:
+                name = path.basename(self.hdulist_view.filepath) + "[%i]" % hdu.position
+            except:
+                name = path.basename(self.hdulist_view.filepath)
+        self.fits_viewer.add_hdu_tab(hdu, name)
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)

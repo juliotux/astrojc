@@ -63,6 +63,9 @@ class Imexam():
             log.error('No plot axes connected.')
         else:
             self.plot_ax.cla()
+        self._displot_ax
+
+    def _displot_ax(self):
         for i in self.plotted:
             try:
                 i[0].remove()
@@ -70,6 +73,7 @@ class Imexam():
                 i.remove()
             del i
         self.plotted = []
+        self.ax.get_figure().canvas.draw()
 
     def set_hdu(self, hdu):
         self.hdu = hdu
@@ -97,6 +101,7 @@ class Imexam():
     def disconnect(self):
         if self.connected is not None:
             log.info('Disconnecting imexam from slot %i' % self.connected)
+            self._displot_ax()
             self.fig.canvas.mpl_disconnect(self.connected)
             self.ax = None
             self.fig = None

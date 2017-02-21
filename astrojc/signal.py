@@ -10,8 +10,13 @@ class MySignal(object):
     This class implements a simple way to handle signals in Python, without use
     qt, but with similar (simpler) behavior. No slot is supported.
     '''
-    def __init__(self):
+    def __init__(self, raise_error=True):
         self._emit_function = None
+        self.raise_error = raise_error
+
+    @property
+    def is_connected(self):
+        return self._emit_function != None
 
     def connect(self, function):
         '''
@@ -31,5 +36,11 @@ class MySignal(object):
         '''
         if self._emit_function is not None:
             return self._emit_function(*args, **kwargs)
-        raise NotConnectedException('This signal is not connected with any '
-                                    'emit function.')
+        elif self.raise_error:
+            raise NotConnectedException('This signal is not connected with any '
+                                        'emit function.')
+        else:
+            return
+
+    def __call__(self, *args, **kwargs):
+        return self.emit(*args, **kwargs)
