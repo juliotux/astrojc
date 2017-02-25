@@ -6,7 +6,6 @@ matplotlib.use('Qt5Agg')
 from qtpy import QtCore, QtWidgets, QtGui
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.colors import LogNorm, Normalize, PowerNorm
 import numpy as np
 from functools import partial
 
@@ -92,7 +91,7 @@ class HDUFigureCanvas2D(QtWidgets.QWidget):
         self.create_toolbar()
         self.create_plot()
 
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(400, 400)
 
         self.layout.addWidget(self.toolbar, 0, 0, 1, 2)
         self.layout.addWidget(self.figCanvas, 1, 0, 1, 1)

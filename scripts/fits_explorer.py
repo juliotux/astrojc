@@ -64,9 +64,20 @@ class FitsExplorerMW(QtWidgets.QMainWindow):
                 name = path.basename(self.hdulist_view.filepath)
         self.fits_viewer.add_hdu_tab(hdu, name)
 
-if __name__ == '__main__':
-    app = QtWidgets.QApplication(sys.argv)
+def main(argv):
+    app = QtWidgets.QApplication(argv)
     mw = FitsExplorerMW()
     mw.show()
 
     sys.exit(app.exec_())
+
+def main_test():
+    app = QtWidgets.QApplication(sys.argv)
+    mw = FitsExplorerMW('/run/media/julio/OPD_DATA/Raw')
+    mw.show()
+
+    sys.exit(app.exec_())
+
+if __name__ == '__main__':
+    #main(sys.argv)
+    main_test()
