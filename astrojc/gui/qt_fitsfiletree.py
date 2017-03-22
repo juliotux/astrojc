@@ -112,6 +112,8 @@ class HDUListView(QtWidgets.QListWidget):
         self.open_data = MySignal()
         self.open_header = MySignal()
 
+        self.active_primary_header = None
+
     def add_fitsfile(self, fname):
         '''
         Add all HDUs from a fits file to the list.
@@ -120,12 +122,14 @@ class HDUListView(QtWidgets.QListWidget):
         try:
             f = fits.open(fname)
             j = 0
+            self.active_primary_header = f[0].header
             for i in f:
                 i.position = j
                 self.add_hdu(i)
                 j += 1
             self.filepath = fname
         except:
+            self.active_primary_header = None
             pass
 
     def add_hdu(self, hdu):
@@ -144,6 +148,8 @@ class HDUFileSystemModel(QtWidgets.QWidget):
     def __init__(self, path, parent=None):
         super(QtWidgets.QWidget, self).__init__(parent)
 
+        self.active_item = None
+
         self.pathRoot = path
         self.dirmodel = QtWidgets.QFileSystemModel(self)
         self.dirmodel.setRootPath(self.pathRoot)
@@ -161,9 +167,11 @@ class HDUFileSystemModel(QtWidgets.QWidget):
 
     def on_filetree_clicked(self, index):
         indexItem = self.dirmodel.index(index.row(), 0, index.parent())
+
         if not self.dirmodel.isDir(indexItem):
             if self.on_fits_clicked.is_connected:
-                self.on_fits_clicked(self.dirmodel.filePath(indexItem))
+                self.active_item = self.dirmodel.filePath(indexItem)
+                self.on_fits_clicked(self.active_item)
 
     def set_root_path(self, path):
         self.pathRoot = path

@@ -16,12 +16,12 @@ def process_image(*args, **kwargs):
                            exposure_unit=None, dark_scale=False, add_keyword=True)'''
     return ccdproc.ccd_process(*args, **kwargs)
 
-def combine_bias(ccd_list, combine_method='median', **reductwargs):
+def combine_bias(ccd_list, combine_method='median', mem_limit=mem_limit, **reductwargs):
     for i in range(len(ccd_list)):
         ccd_list[i] = process_image(ccd_list[i], **reductwargs)
     return combine(ccd_list, method=combine_method, mem_limit=mem_limit)
 
-def combine_flat(ccd_list, master_bias, combine_method='median', **reductwargs):
+def combine_flat(ccd_list, master_bias, combine_method='median', mem_limit=mem_limit, **reductwargs):
     for i in range(len(ccd_list)):
         ccd_list[i] = process_image(ccd_list[i], master_bias=master_bias, **reductwargs)
         ccd_list[i].data = ccd_list[i].data/np.median(ccd_list[i].data)

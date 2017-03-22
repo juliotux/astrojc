@@ -1,0 +1,88 @@
+{
+    "photometry_reference_catalogs" : {
+        "UCAC4" : {
+            "filters" : ["B", "V", "g", "r", "i"],
+            "source" : "vizier",
+            "vizier_table" : "I/322A",
+            "prepend_id_key" : true,
+            "id_key" : "UCAC4",
+            "ra_key" : "RAJ2000",
+            "dec_key" : "DEJ2000",
+            "flux_key" : "{%f}mag",
+            "flux_error_key" : "e_{%f}mag",
+            "flux_unit" : "mag",
+            "ads_ref_string" : "2013AJ....145...44Z",
+            "comment" : "Magnitudes from APASS"
+        },
+        "APASS" : {
+            "filters" : ["B", "V", "g'", "r'", "i'"],
+            "source" : "vizier",
+            "vizier_table" : "II/336/apass9",
+            "prepend_id_key" : false,
+            "id_key" : -1,
+            "ra_key" : "RAJ2000",
+            "dec_key" : "DEJ2000",
+            "flux_key" : "{%f}mag",
+            "flux_error_key" : "e_{%f}mag",
+            "flux_unit" : "mag",
+            "ads_ref_string" : "2016yCat.2336....0H",
+            "comment" : "g', r' and i' magnitudes in AB system"
+        },
+        "DENIS" : {
+            "filters" : ["I", "J", "K"],
+            "source" : "vizier",
+            "vizier_table" : "B/denis",
+            "prepend_id_key" : true,
+            "id_key" : "DENIS",
+            "ra_key" : "RAJ2000",
+            "dec_key" : "DEJ2000",
+            "flux_key" : "{%f}mag",
+            "flux_error_key" : "e_{%f}mag",
+            "flux_unit" : "mag",
+            "ads_ref_string" : "2005yCat.2263....0T",
+            "comment" : "Id, Jd, Kd may differ a bit from 2MASS catalog"
+        },
+        "Bon10" : {
+            "filters" : ["U", "B", "V", "I", "J", "H", "K"],
+            "source" : "vizier",
+            "vizier_table" : "J/AJ/140/416/table3",
+            "prepend_id_key" : false,
+            "id_key" : "Name",
+            "ra_key" : "RAJ2000",
+            "dec_key" : "DEJ2000",
+            "flux_key" : "{%f}mag",
+            "flux_error_key" : "e_{%f}mag",
+            "flux_unit" : "mag",
+            "ads_ref_string" : "2010AJ....140..416B",
+            "comment" : "J, H and K mags from 2MASS"
+        },
+        "2MASS" : {
+            "filters" : ["J", "H", "K"],
+            "source" : "vizier",
+            "vizier_table" : "II/246",
+            "prepend_id_key" : false,
+            "prepend_id" : "2MASS",
+            "id_key" : "_2MASS",
+            "ra_key" : "RAJ2000",
+            "dec_key" : "DEJ2000",
+            "flux_key" : "{%f}mag",
+            "flux_error_key" : "e_{%f}mag",
+            "flux_unit" : "mag",
+            "ads_ref_string" : "2003yCat.2246....0C",
+            "comment" : ""
+        },
+        "Simbad" : {
+            "filters" : ["U", "B", "V", "R", "I", "J", "H", "K", "u", "g", "r", "i", "z"],
+            "source" : "simbad",
+            "prepend_id_key" : true,
+            "id_key" : "MAIN_ID",
+            "ra_key" : "RA",
+            "dec_key" : "DEC",
+            "flux_key" : "FLUX_{%f}",
+            "flux_error_key" : "FLUX_ERROR_{%f}",
+            "flux_unit_key" : "FLUX_UNIT_{%f}",
+            "ads_ref_string_key" : "FLUX_BIBCODE_V",
+            "comment" : "flux values from different sources"
+        }
+    }
+}

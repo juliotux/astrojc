@@ -91,7 +91,7 @@ def median_comparision(fluxes, flux_error, references, limits=(5,18)):
     dif = bn.nanmedian(diff)
     err = bn.nanstd(diff)
 
-    error = 1.086*((flux_error + np.sqrt(fluxes))/fluxes) #+ err
+    error = 1.086*((flux_error + np.sqrt(fluxes))/fluxes) + err
     return mags + dif, error
 
 def montecarlo_comparision(fluxes, flux_error, references, limits=(5, 18), n_iter=100, n_stars=0.5):

@@ -1,0 +1,69 @@
+{
+    "photometry" : {
+        "steps" : ["remove_cosmics", "background", "source_find", "astrometry_solve",
+                   "psf_photometry", "aperture_photometry", "mag_comparision",
+                   "plot_results"],
+        "**remove_cosmics" : {
+            "method" : "astroscrappy"
+        },
+        "**background" : {
+            "method" : "photutils_mmmbackground",
+            "**photutils_mmmbackground" : {
+                "sigma_clip" : 3
+            }
+        },
+        "**source_find" : {
+            "method" : "photutils_daofind",
+            "**photutils_daofind" : {
+                "sharplo" : 0.0,
+                "shaprhi" : 1.0,
+                "roundlo" : -2.0,
+                "roundhi" : 2.0,
+                "snr" : 5
+            }
+        },
+        "**astrometry_solve" : {
+            "astrometry_engine" : ["astrometry.net"],
+            "astrometry_RA_key" : "RA",
+            "astrometry_DEC_key" : "DEC",
+            "names_from" : ["SIMBAD", "UCAC4"]
+        },
+        "**psf_photometry" : {
+            "methods" : ["astrojc_psf"],
+            "**astrojc_psf" : {
+            	"models" : ["moffat", "gaussian"],
+            	"save_parameters" : true,
+            	"source_find" : "use_sources",
+            	"group_stars" : true,
+            	"group_method" : "photutils_daogroup",
+            	"fit_method" : "astropy_lmfitter",
+            	"photometer" : "photutils_itersubphot",
+                "subtract_background" : false,
+                "box_size" : 35
+            }
+        },
+        "**aperture_photometry" : {
+            "method" : ["photutils", "sep"],
+            "**photutils" : {
+                "apertures" : [1, 2, 3, 4, 5, 6, 7],
+                "annulus_in" : 10,
+                "annulus_out" : 15
+            },
+            "**sep" : {
+                "apertures" : [1, 2, 3, 4, 5, 6, 7],
+                "annulus_in" : 10,
+                "annulus_out" : 15
+            }
+        },
+        "**mag_comparision" : {
+            "method" : ["montecarlo", "median"],
+            "**motecarlo" : {
+                "percentage" : 0.3,
+                "iters" : 300
+            },
+            "**median" : {
+                "sigma_clip" : 3
+            }
+        }
+    }
+}

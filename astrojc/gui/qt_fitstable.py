@@ -31,15 +31,19 @@ class FITSTableModel(QtCore.QAbstractTableModel):
                 return p_int
         return None
 
-class HDUTableWidget(QtWidgets.QTableView):
+class HDUTableWidget(QtWidgets.QWidget):
     def __init__(self, hdu, parent):
-        super(QtWidgets.QTableView, self).__init__(parent)
+        super(QtWidgets.QWidget, self).__init__(parent)
+        self.layout = QtWidgets.QGridLayout(self)
 
         self.hdu = hdu
         self.table_model = FITSTableModel(hdu, self)
+        self.table_view = QtWidgets.QTableView()
 
-        self.setModel(self.table_model)
-        self.setMinimumSize(400, 300)
-        self.resizeColumnsToContents()
+        self.table_view.setModel(self.table_model)
+        self.table_view.setMinimumSize(400, 300)
+        self.table_view.resizeColumnsToContents()
+
+        self.layout.addWidget(self.table_view, 0, 0)
 
         #TODO: plot, edit, save ascii, etc...

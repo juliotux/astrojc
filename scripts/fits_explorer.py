@@ -57,11 +57,17 @@ class FitsExplorerMW(QtWidgets.QMainWindow):
         self.setCentralWidget(self.fits_viewer)
 
     def open_data(self, hdu, name=None):
+        #TODO: temporary show the mjd info
+        try:
+            mjd = str(self.hdulist_view.active_primary_header['jd'])
+        except:
+            mjd = ''
+
         if name is None:
             try:
-                name = path.basename(self.hdulist_view.filepath) + "[%i]" % hdu.position
+                name = path.basename(self.hdulist_view.filepath) + "[%i] %s" % (hdu.position, mjd)
             except:
-                name = path.basename(self.hdulist_view.filepath)
+                name = path.basename(self.hdulist_view.filepath) + str(mjd)
         self.fits_viewer.add_hdu_tab(hdu, name)
 
 def main(argv):
@@ -73,7 +79,7 @@ def main(argv):
 
 def main_test():
     app = QtWidgets.QApplication(sys.argv)
-    mw = FitsExplorerMW('/run/media/julio/OPD_DATA/Raw')
+    mw = FitsExplorerMW('/run/media/julio/')
     mw.show()
 
     sys.exit(app.exec_())

@@ -167,7 +167,7 @@ def solve(path, output_file=None, ra=None, dec=None, pltscl=None,
 
     options = {
         'no-plot' : None,
-        'no-fits2fits' : None,
+        #'no-fits2fits' : None,
         'overwrite' : None,
         'depth' : "40,60,80,120"
         }
