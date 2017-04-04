@@ -17,7 +17,7 @@ def rv_correct(wave, rv):
     --------
     array_like : The radial velocity corrected wavelength array.
     '''
-    return wave*(1 - rv/3e5)
+    return wave*(1 - (float(rv)/3e5))
 
 class Spectrum(object):
     '''Generic class for 1D spectrum.'''
