@@ -6,7 +6,7 @@ import numpy as np
 from .spectrum import Spectrum
 
 __all__ = ['iraf_fits_loader', 'xshooter_sflx_loader', 'xshooter_full_loader',
-           'eso_tfits_loader']
+           'eso_tfits_loader', 'spitzer_fits_loader']
 
 def xshooter_sflx_loader(fname):
     '''
@@ -66,3 +66,13 @@ def eso_tfits_loader(fname):
     '''
     f = fits.open(fname)
     return Spectrum(f[1].data['wave'], f[1].data['flux'], f[1].header)
+
+def spitzer_fits_loader(fname):
+    '''
+    Reads Spitzer spectra in fits format (from CASSIS reducing).
+    '''
+    f = fits.open(fname)
+    wave = f[0].data[:, 0]
+    flux = f[0].data[:, 1]
+    sort_order = np.argsort(wave)
+    return Spectrum(wave[sort_order], flux[sort_order], header=f[0].header)
