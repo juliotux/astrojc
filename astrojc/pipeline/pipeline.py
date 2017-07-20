@@ -15,9 +15,10 @@ from .nodes import Node
 from .utils import check_class, get_all_subclasses, mkdir_p
 
 
-nodes_dirs = [path.expanduser('~/.local/share/astrojc/nodes'),
-             '/usr/local/share/astrojc/nodes',
-             '/usr/share/astrojc/nodes']
+nodes_dirs = [path.expanduser('~/.astrojc/nodes'),
+              path.expanduser('~/.local/share/astrojc/nodes'),
+              '/usr/local/share/astrojc/nodes',
+              '/usr/share/astrojc/nodes']
 
 def read_json(fname):
     f = open(fname, 'r').read()
