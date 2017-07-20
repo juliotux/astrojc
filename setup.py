@@ -8,5 +8,6 @@ setup(name='astrojc',
       url='https://www.on.br/',
       packages=['astrojc', 'astrojc.mpl', 'astrojc.fitting', 'astrojc.io',
                 'astrojc.reducing', 'astrojc.photometry', 'astrojc.spectra',
-                'astrojc.gui', 'astrojc.math', 'astrojc.calculators']
+                'astrojc.gui', 'astrojc.math', 'astrojc.calculators',
+                'astrojc.pipeline']
      )
