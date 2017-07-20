@@ -1,0 +1,68 @@
+{
+    "pipeline_name" : "testing_pipeline",
+    "pipeline_version" : ">= 0.0.1.alpha",
+    "values" : {
+        "raw_dir" : "/run/media/julio/OPD_DATA/OPD/Raw/BC/Julio/17fev23",
+        "prod_dir" : "/run/media/julio/OPD_DATA/OPD/Red/BC/Julio/17fev23",
+        "calib_dir" : "/run/media/julio/OPD_DATA/OPD/Calib/BC/Julio/17fev23",
+        "vbin" : 1,
+        "hbin" : 1
+    },
+    "products" : {
+        "mbias1x.fits" : {
+            "values" : {
+                "sources" : ["%RAW_DIR%/BIAS_1X_0000.fits",
+                             "%RAW_DIR%/BIAS_1X_0001.fits",
+                             "%RAW_DIR%/BIAS_1X_0002.fits",
+                             "%RAW_DIR%/BIAS_1X_0003.fits",
+                             "%RAW_DIR%/BIAS_1X_0004.fits",
+                             "%RAW_DIR%/BIAS_1X_0005.fits",
+                             "%RAW_DIR%/BIAS_1X_0006.fits",
+                             "%RAW_DIR%/BIAS_1X_0007.fits",
+                             "%RAW_DIR%/BIAS_1X_0008.fits",
+                             "%RAW_DIR%/BIAS_1X_0009.fits",
+                             "%RAW_DIR%/BIAS_1X_0010.fits",
+                             "%RAW_DIR%/BIAS_1X_0011.fits",
+                             "%RAW_DIR%/BIAS_1X_0012.fits",
+                             "%RAW_DIR%/BIAS_1X_0013.fits",
+                             "%RAW_DIR%/BIAS_1X_0014.fits",
+                             "%RAW_DIR%/BIAS_1X_0015.fits",
+                             "%RAW_DIR%/BIAS_1X_0016.fits",
+                             "%RAW_DIR%/BIAS_1X_0017.fits",
+                             "%RAW_DIR%/BIAS_1X_0018.fits",
+                             "%RAW_DIR%/BIAS_1X_0019.fits"],
+                "pre_scale" : false,
+                "normalize" : false,
+                "type" : "calib"
+            }
+        },
+        "flat1xV.fits" : {
+            "values" : {
+                "sources" : ["%RAW_DIR%/FLAT_V_0000.fits",
+                             "%RAW_DIR%/FLAT_V_0001.fits",
+                             "%RAW_DIR%/FLAT_V_0002.fits",
+                             "%RAW_DIR%/FLAT_V_0003.fits",
+                             "%RAW_DIR%/FLAT_V_0004.fits",
+                             "%RAW_DIR%/FLAT_V_0005.fits",
+                             "%RAW_DIR%/FLAT_V_0006.fits",
+                             "%RAW_DIR%/FLAT_V_0007.fits",
+                             "%RAW_DIR%/FLAT_V_0008.fits",
+                             "%RAW_DIR%/FLAT_V_0009.fits",
+                             "%RAW_DIR%/FLAT_V_0010.fits",
+                             "%RAW_DIR%/FLAT_V_0011.fits",
+                             "%RAW_DIR%/FLAT_V_0012.fits",
+                             "%RAW_DIR%/FLAT_V_0013.fits",
+                             "%RAW_DIR%/FLAT_V_0014.fits",
+                             "%RAW_DIR%/FLAT_V_0015.fits",
+                             "%RAW_DIR%/FLAT_V_0016.fits",
+                             "%RAW_DIR%/FLAT_V_0017.fits",
+                             "%RAW_DIR%/FLAT_V_0018.fits",
+                             "%RAW_DIR%/FLAT_V_0019.fits"],
+                "master_bias" : "%CALIB_DIR%/bias1x.fits",
+                "pre_scale" : true,
+                "normalize" : true,
+                "type" : "calib"
+            }
+        }
+    }
+}

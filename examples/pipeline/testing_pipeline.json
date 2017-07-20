@@ -1,0 +1,40 @@
+{
+    "name" : "testing_pipeline",
+    "version" : "0.0.1.aplha",
+    "nodes" : {
+        "preprocess" : "ForSuperNode",
+        "preprocess.read" : "ReadCCDData",
+        "preprocess.trim_and_bin" : "BinAndTrim",
+        "preprocess.ccdproc" : "CCDProcess",
+        "preprocess.lacosmic" : "LACosmic",
+        "combine_images" : "CombineImages",
+        "write_fits" : "WriteCCDData"
+    },
+    "connections" : {
+        "preprocess.output.i" : "preprocess.read.input.file_name",
+        "preprocess.read.output.image" : "preprocess.trim_and_bin.input.image",
+        "preprocess.trim_and_bin.output.image" : "preprocess.ccdproc.input.image",
+        "preprocess.ccdproc.output.image" : "preprocess.lacosmic.input.image",
+        "preprocess.lacosmic.output.image" : "preprocess.input.result",
+        "preprocess.output.[results]" : "combine_images.input.image_list",
+        "combine_images.output.image" : "write_fits.input.image"
+    },
+    "redirects" : {
+        "vbin" : "preprocess.trim_and_bin.input.vbin",
+        "hbin" : "preprocess.trim_and_bin.input.hbin",
+        "master_bias" : "preprocess.ccdproc.input.bias",
+        "master_flat" : "preprocess.ccdproc.input.flat",
+        "master_dark" : "preprocess.ccdproc.input.dark",
+        "combine_method" : "combine_images.input.method",
+        "pre_scale" : "combine_images.property.scale",
+        "normalize" : "combine_images.input.normalize",
+        "sources" : "preprocess.input.[i]",
+        "%PRODUCT_FILE%" : "write_fits.input.file_name",
+        "raw_dir" : "%RAW_DIR%",
+        "prod_dir" : "%PROD_DIR%",
+        "calib_dir" : "%CALIB_DIR%",
+        "type" : "%PROD_TYPE%"
+    },
+    "values" : {
+    }
+}
