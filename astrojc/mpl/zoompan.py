@@ -35,10 +35,10 @@ class ZoomPan(object):
 
             if event.button == 'down':
                 # deal with zoom in
-                scale_factor = 1 / base_scale
+                scale_factor = base_scale
             elif event.button == 'up':
                 # deal with zoom out
-                scale_factor = base_scale
+                scale_factor = 1 / base_scale
             else:
                 # deal with something that should never happen
                 scale_factor = 1
@@ -99,4 +99,3 @@ class ZoomPan(object):
 
         #return the function
         return onMotion
-
