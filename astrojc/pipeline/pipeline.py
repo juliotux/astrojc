@@ -100,7 +100,13 @@ class Pipeline(object):
                 raise
 
         for i,v in j['connections'].items():
-            self._connections.append((i, v))
+            if isinstance(v, (list, tuple)):
+                for k in v:
+                    self._connections.append((i, k))
+            else:
+                self._connections.append((i, v))
+
+        for i,v in self._connections:
             try:
                 self._ctx.link(i, v)
             except:

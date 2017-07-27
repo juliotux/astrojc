@@ -60,6 +60,6 @@ def calculate_polarimetry_half(fo, fe, psis):
     k=1
     z = (fo - fe*k)/(fo + fe*k)
     try:
-        return curve_fit(_qhalf, psis, z)
+        return curve_fit(_half, psis, z)
     except:
         return (np.nan, np.nan), [[np.nan, np.nan],[np.nan, np.nan]]

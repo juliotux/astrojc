@@ -38,12 +38,18 @@ class WriteCCDData(Node):
     def setup(self):
         self.add_input('image')
         self.add_input('file_name', StringInput)
+        self.add_input('path', StringInput, optional=True)
         #self.add_input('save_jpeg', 'bool', False)
 
     def run(self):
-        self.log.info('Saving data to file {}'.format(self['input.file_name']))
         image = self['input.image']
-        image.to_hdu().writeto(self['input.file_name'], overwrite=True)
+        if self.get_dock('input.path').have_value:
+            fpath = self['input.path']
+        else:
+            fpath = path.dirname(self['input.file_name'])
+        name = path.join(fpath, path.basename(self['input.file_name']))
+        self.log.info('Saving data to file {}'.format(name))
+        image.to_hdu().writeto(name, overwrite=True)
 
 
 class CombineImages(Node):
