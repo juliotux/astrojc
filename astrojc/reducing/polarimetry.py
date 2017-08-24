@@ -1,6 +1,7 @@
+import numpy as np
 from scipy.spatial import cKDTree
 from scipy.optimize import curve_fit
-import numpy as np
+
 
 def _estimate_d(x):
     #TODO: Think in use a autocorrelation instead histograms to determine dx

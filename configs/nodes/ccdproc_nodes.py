@@ -49,7 +49,7 @@ class WriteCCDData(Node):
             fpath = path.dirname(self['input.file_name'])
         name = path.join(fpath, path.basename(self['input.file_name']))
         self.log.info('Saving data to file {}'.format(name))
-        image.to_hdu().writeto(name, overwrite=True)
+        #image.to_hdu().writeto(name, overwrite=True)
 
 
 class CombineImages(Node):

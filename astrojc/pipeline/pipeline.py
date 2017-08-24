@@ -117,7 +117,6 @@ class Pipeline(object):
 
         for i,v in j['redirects'].items():
             self._redirects[i] = v
-
         self._path = path.dirname(path.realpath(fname))
 
         self._variables = {'%PRODUCT_FILE%' : '',
@@ -183,6 +182,16 @@ class Pipeline(object):
                         self._ctx.log.info('Adding {} to valid node list.'.format(name))
                         self._valid_nodes[name] = obj
 
+    def _update_redirects(self, tmp_prod):
+        _keys = list(tmp_prod.keys())
+        for i in _keys:
+            tmp = i
+            if tmp in self._redirects.keys():
+                while tmp in self._redirects.keys():
+                    self._ctx.log.debug('Redirecting {} to {}.'.format(tmp, self._redirects[tmp]))
+                    tmp_prod[self._redirects[tmp]] = tmp_prod[tmp]
+                    tmp = self._redirects[tmp]
+
     def run_product(self, product):
         '''Run a single product.'''
         self._ctx.log.info('Reseting the pipeline context.')
@@ -208,13 +217,7 @@ class Pipeline(object):
 
         _tmp_prod['%PRODUCT_NAME%'] = product
 
-        for i in _keys:
-            tmp = i
-            if tmp in self._redirects.keys():
-                while tmp in self._redirects.keys():
-                    self._ctx.log.debug('Redirecting {} to {}.'.format(tmp, self._redirects[tmp]))
-                    _tmp_prod[self._redirects[tmp]] = _tmp_prod[tmp]
-                    tmp = self._redirects[tmp]
+        self._update_redirects(_tmp_prod)
 
         for i,v in _tmp_prod.items():
             if i in self._variables.keys():

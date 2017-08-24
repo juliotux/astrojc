@@ -49,6 +49,7 @@ class Input(object):
         return self.get_value() not in (empty_value, None)
 
     def set_value(self, value):
+        print('Setting value {} for this node.'.format(value))
         self._value = value
 
     def get_value(self):
@@ -67,6 +68,7 @@ class Input(object):
         self.active = kwargs.pop('active', self.active)
         self.return_copy = kwargs.pop('return_copy', self.return_copy)
         self._default_value = kwargs.pop('default_value', self._default_value)
+        self._value = kwargs.pop('default_value', self._default_value)
 
     def link(self, conn):
         '''Link this input to an Connector.'''
