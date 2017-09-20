@@ -1,1 +1,1 @@
-import astromatic_wrapper as astromatic
+from . import astromatic_wrapper as astromatic

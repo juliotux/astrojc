@@ -475,4 +475,4 @@ def sex(image, params=[], configs={}, sex_command=None, work_dir=None):
 
 
 
-sex(None)
+#sex(None)

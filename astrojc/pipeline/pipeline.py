@@ -182,15 +182,18 @@ class Pipeline(object):
                         self._ctx.log.info('Adding {} to valid node list.'.format(name))
                         self._valid_nodes[name] = obj
 
-    def _update_redirects(self, tmp_prod):
-        _keys = list(tmp_prod.keys())
-        for i in _keys:
-            tmp = i
-            if tmp in self._redirects.keys():
-                while tmp in self._redirects.keys():
-                    self._ctx.log.debug('Redirecting {} to {}.'.format(tmp, self._redirects[tmp]))
-                    tmp_prod[self._redirects[tmp]] = tmp_prod[tmp]
-                    tmp = self._redirects[tmp]
+    def _set_prod_value(self, prod_dict, key, value):
+        '''Update a key value and redirects the value recursively.'''
+        prod_dict[key] = value
+        if key in self._redirects.keys():
+            if isinstance(self._redirects[key], (tuple, list)):
+                for i in self._redirects[key]:
+                    self._ctx.log.debug('Redirecting {} to {}.'.format(key, i))
+                    self._set_prod_value(prod_dict, i, value)
+            else:
+                self._ctx.log.debug('Redirecting {} to {}.'.format(key, self._redirects[key]))
+                self._set_prod_value(prod_dict, self._redirects[key], value)
+
 
     def run_product(self, product):
         '''Run a single product.'''
@@ -210,14 +213,12 @@ class Pipeline(object):
             self._ctx[i] = v
 
         self._ctx.log.info('Setting {} product variables.'.format(product))
-
-        _tmp_prod = copy.copy(self._products[product])
-        _tmp_prod.update(self._variables)
-        _keys = list(_tmp_prod.keys())
-
-        _tmp_prod['%PRODUCT_NAME%'] = product
-
-        self._update_redirects(_tmp_prod)
+        _tmp_prod = OrderedDict()
+        for i,v in self._products[product].items():
+            self._set_prod_value(_tmp_prod, i, v)
+        for i,v in self._variables.items():
+            self._set_prod_value(_tmp_prod, i, v)
+        self._set_prod_value(_tmp_prod, '%PRODUCT_NAME%', product)
 
         for i,v in _tmp_prod.items():
             if i in self._variables.keys():
@@ -237,16 +238,9 @@ class Pipeline(object):
                                                           self._variables['%PRODUCT_NAME%'])
         self._variables['%PROD_TYPE%'] = self._products[product]['type']
 
-        _tmp_prod.update(self._variables)
 
-        _keys = list(_tmp_prod.keys())
-        for i in _keys:
-            tmp = i
-            if tmp in self._redirects.keys():
-                while tmp in self._redirects.keys():
-                    self._ctx.log.debug('Redirecting {} to {}.'.format(tmp, self._redirects[tmp]))
-                    _tmp_prod[self._redirects[tmp]] = _tmp_prod[tmp]
-                    tmp = self._redirects[tmp]
+        for i,v in self._variables.items():
+            self._set_prod_value(_tmp_prod, i, v)
 
         for i,v in _tmp_prod.items():
             if i in self._ctx.vars().keys():
