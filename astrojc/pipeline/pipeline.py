@@ -214,9 +214,9 @@ class Pipeline(object):
 
         self._ctx.log.info('Setting {} product variables.'.format(product))
         _tmp_prod = OrderedDict()
-        for i,v in self._products[product].items():
-            self._set_prod_value(_tmp_prod, i, v)
         for i,v in self._variables.items():
+            self._set_prod_value(_tmp_prod, i, v)
+        for i,v in self._products[product].items():
             self._set_prod_value(_tmp_prod, i, v)
         self._set_prod_value(_tmp_prod, '%PRODUCT_NAME%', product)
 

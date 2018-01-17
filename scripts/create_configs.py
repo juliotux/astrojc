@@ -1,0 +1,384 @@
+from qtpy.QtCore import Qt
+from qtpy.QtGui import QIcon
+from qtpy.QtWidgets import (QApplication, QDialog, QGridLayout, QLabel,
+                            QLineEdit, QPushButton, QSpinBox,
+                            QWidget, QFileDialog, QListWidget,
+                            QListWidgetItem, QMenu, QTableWidgetItem,
+                            QTableWidget, QAbstractItemView,
+                            QSizePolicy, QSpacerItem, QHBoxLayout,
+                            QVBoxLayout)
+from functools import partial
+from os import path
+from collections import OrderedDict
+
+
+# TODO: Open/Save files, them its finished!
+
+
+class ConfigItemText(QWidget):
+    def __init__(self, parent=None, default_name=None, default_value=None):
+        super(QWidget, self).__init__(parent=parent)
+
+        self._layout = QHBoxLayout()
+
+        self._field_name = QLineEdit('field name')
+        self._field_name.setSizePolicy(QSizePolicy.Minimum,
+                                       QSizePolicy.Minimum)
+        if default_name is not None:
+            self._field_name.setText(str(default_name))
+        self._field_value = QLineEdit('field value')
+        if default_value is not None:
+            self._field_value.setText(str(default_value))
+
+        self._layout.addWidget(self._field_name)
+        self._layout.addWidget(self._field_value)
+
+        self.setLayout(self._layout)
+
+    @property
+    def name(self):
+        return self._field_name.text()
+
+    @property
+    def value(self):
+        try:
+            f = float(self._field_value.text())
+            if f % 1 == 0:
+                return int(f)
+            else:
+                return f
+        except ValueError:
+            return self._field_value.text()
+
+
+class ConfigItemFiles(QWidget):
+    def __init__(self, parent=None, default_name=None, default_value=None):
+        super(QWidget, self).__init__(parent=parent)
+
+        self._field_name = QLineEdit('field name')
+        self._field_name.setSizePolicy(QSizePolicy.Minimum,
+                                       QSizePolicy.Minimum)
+        if default_name is not None:
+            self._field_name.setText(str(default_name))
+        self._field_value = QListWidget()
+        self._field_value.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._field_value.setSizePolicy(QSizePolicy.MinimumExpanding,
+                                        QSizePolicy.Expanding)
+        if default_value is not None and isinstance(default_value,
+                                                    (list, tuple)):
+            for i in default_value:
+                self.add_file(i)
+
+        self._dlayout = QVBoxLayout()
+        self._dlayout.addWidget(self._field_name)
+        self._dlayout.addItem(QSpacerItem(5, 5, QSizePolicy.Minimum,
+                                          QSizePolicy.Expanding))
+
+        self._add_button = QPushButton(QIcon.fromTheme('list-add'), '')
+        self._add_button.setToolTip('Add values to the list')
+        self._add_button.clicked.connect(self.add_value)
+        self._fil_button = QPushButton(QIcon.fromTheme('document-new'), '')
+        self._fil_button.setToolTip('Add file names to the list')
+        self._fil_button.clicked.connect(self.open_files)
+        self._rem_button = QPushButton(QIcon.fromTheme('list-remove'), '')
+        self._rem_button.setToolTip('Add current row from the list')
+        self._rem_button.clicked.connect(self.remove_file)
+        self._cle_button = QPushButton(QIcon.fromTheme('edit-clear'), '')
+        self._cle_button.setToolTip('Empty the list')
+        self._cle_button.clicked.connect(self._field_value.clear)
+        self._slayout = QVBoxLayout()
+        self._slayout.addWidget(self._add_button)
+        self._slayout.addWidget(self._fil_button)
+        self._slayout.addWidget(self._rem_button)
+        self._slayout.addWidget(self._cle_button)
+        self._slayout.addItem(QSpacerItem(5, 5, QSizePolicy.Minimum,
+                                          QSizePolicy.Expanding))
+
+        self._layout = QHBoxLayout()
+        self._layout.addLayout(self._dlayout)
+        self._layout.addWidget(self._field_value)
+        self._layout.addLayout(self._slayout)
+
+        self.setLayout(self._layout)
+
+    @property
+    def name(self):
+        return self._field_name.text()
+
+    @property
+    def value(self):
+        return [self._field_value.item(i).text() for i in
+                range(self._field_value.count())]
+
+    def add_value(self):
+        item = QListWidgetItem('<new item, click to edit>')
+        item.setFlags(item.flags() | Qt.ItemIsEditable)
+        self._field_value.addItem(item)
+
+    def add_file(self, filename):
+        self._field_value.addItem(path.basename(filename))
+
+    def remove_file(self):
+        items = self._field_value.selectedItems()
+        for i in items:
+            self._field_value.takeItem(self._field_value.row(i))
+
+    def open_files(self):
+        files = QFileDialog.getOpenFileNames(self, 'Select list file')[0]
+        for i in files:
+            self.add_file(i)
+
+
+class ConfigEditorWidget(QWidget):
+    def __init__(self, parent=None):
+        super(QWidget, self).__init__(parent=parent)
+        self.setMinimumSize(600, 300)
+
+        self._configlist = None
+
+        self._layout = QGridLayout(self)
+        self.setLayout(self._layout)
+
+        self._add_menu = QMenu()
+        self._add_text_action = self._add_menu.addAction('Add text or number')
+        self._add_text_action.triggered.connect(partial(self._add,
+                                                        type='text'))
+        self._add_file_action = self._add_menu.addAction('Add list field')
+        self._add_file_action.triggered.connect(partial(self._add,
+                                                        type='file'))
+        self._add_field_button = QPushButton(QIcon.fromTheme('list-add'), '')
+        self._add_field_button.setMenu(self._add_menu)
+        self._remove_field_button = QPushButton(QIcon.fromTheme('list-remove'),
+                                                '')
+        self._remove_field_button.clicked.connect(self._remove)
+        self._clear_button = QPushButton(QIcon.fromTheme('edit-clear'), '')
+        self._clear_button.clicked.connect(self._clear)
+        self._slayout = QVBoxLayout()
+        self._slayout.addWidget(self._add_field_button)
+        self._slayout.addWidget(self._remove_field_button)
+        self._slayout.addWidget(self._clear_button)
+        self._slayout.addItem(QSpacerItem(5, 5, QSizePolicy.Minimum,
+                                          QSizePolicy.Expanding))
+
+        self._add_config_to_list = QPushButton(QIcon.fromTheme('go-next'),
+                                               'Add config to list')
+        self._add_config_to_list.clicked.connect(self._finish_config)
+        self._name = QLineEdit()
+        self._order = QSpinBox()
+        self._order.setMinimum(1)
+        self._nlayout = QHBoxLayout()
+        self._nlayout.addWidget(QLabel('Name'))
+        self._nlayout.addWidget(self._name)
+        self._nlayout.addWidget(QLabel('Order'))
+        self._nlayout.addWidget(self._order)
+        self._nlayout.addItem(QSpacerItem(5, 5, QSizePolicy.Expanding,
+                                          QSizePolicy.Minimum))
+        self._nlayout.addWidget(self._add_config_to_list)
+
+        self._list = QListWidget()
+
+        self._layout.addLayout(self._nlayout, 0, 0, 1, 2)
+        self._layout.addWidget(self._list, 1, 1, 1, 1)
+        self._layout.addLayout(self._slayout, 1, 0, 1, 1)
+
+    def set_config_list_widget(self, widget):
+        if isinstance(widget, ListWidget):
+            self._configlist = widget
+        else:
+            raise ValueError('The given widget is not a ListWidget instace.')
+
+    def load_config(self, order, name, config):
+        self._list.clear()
+        self._order.setValue(order)
+        self._name.setText(name)
+
+        for i, v in config.items():
+            if isinstance(v, (list, tuple)):
+                self._add('file', i, v)
+            else:
+                self._add('text', i, v)
+
+    def _add(self, type, default_name=None, default_value=None):
+        if type == 'text':
+            i = QListWidgetItem(self._list)
+            item = ConfigItemText(default_name=default_name,
+                                  default_value=default_value)
+            i.setSizeHint(item.sizeHint())
+            self._list.addItem(i)
+            self._list.setItemWidget(i, item)
+        elif type == 'file':
+            i = QListWidgetItem(self._list)
+            item = ConfigItemFiles(default_name=default_name,
+                                   default_value=default_value)
+            i.setSizeHint(item.sizeHint())
+            self._list.addItem(i)
+            self._list.setItemWidget(i, item)
+
+        return item
+
+    def _remove(self):
+        items = self._list.selectedItems()
+        for i in items:
+            self._list.takeItem(self._list.row(i))
+
+    def _clear(self):
+        self._list.clear()
+
+    def _colect_data(self):
+        config = OrderedDict()
+        for i in range(self._list.count()):
+            wdg = self._list.itemWidget(self._list.item(i))
+            config[wdg.name] = wdg.value
+        return config
+
+    def _finish_config(self):
+        if self._configlist is None:
+            raise ValueError('No config list widget set.')
+
+        if self._list.count() == 0:
+            return
+
+        order = self._order.value()
+        name = self._name.text()
+        config = self._colect_data()
+
+        self._configlist.set_config(order, name, config)
+
+        self._order.setValue(order + 1)
+
+
+class DisplayItemWidget(QTableWidgetItem):
+    def __init__(self, name, config):
+        super(QTableWidgetItem, self).__init__(name)
+
+        self._name = name
+        self._config = config
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def config(self):
+        return self._config
+
+
+class ListWidget(QWidget):
+    def __init__(self, parent=None):
+        super(QWidget, self).__init__(parent=parent)
+
+        self._editor_widget = None
+
+        self._table = QTableWidget()
+        self._table.setColumnCount(1)
+        self._table.setRowCount(0)
+        self._table.verticalHeader().setVisible(True)
+        self._table.horizontalHeader().setVisible(False)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self.setMinimumSize(400, 300)
+
+        self._open_button = QPushButton(QIcon.fromTheme('document-open'),
+                                        'Load File')
+        self._save_button = QPushButton(QIcon.fromTheme('document-save'),
+                                        'Save as')
+        self._edit_item = QPushButton(QIcon.fromTheme('go-previous'),
+                                      'Edit')
+        self._edit_item.clicked.connect(self._edit)
+        self._clear = QPushButton(QIcon.fromTheme('edit-clear'),
+                                  '')
+        self._clear.setToolTip('Clear the list')
+        self._remove_item = QPushButton(QIcon.fromTheme('list-remove'),
+                                        '')
+        self._remove_item.setToolTip('Remove the current item from list')
+        self._move_up = QPushButton(QIcon.fromTheme('go-up'),
+                                    '')
+        self._move_up.setToolTip('Move the current item up')
+        self._move_down = QPushButton(QIcon.fromTheme('go-down'),
+                                      '')
+        self._move_down.setToolTip('Move the current item down')
+
+        self._nlayout = QHBoxLayout()
+        self._nlayout.addWidget(self._edit_item)
+        self._nlayout.addItem(QSpacerItem(5, 5, QSizePolicy.Expanding,
+                                          QSizePolicy.Minimum))
+        self._nlayout.addWidget(self._open_button)
+        self._nlayout.addWidget(self._save_button)
+
+        self._slayout = QVBoxLayout()
+        self._slayout.addWidget(self._remove_item)
+        self._slayout.addWidget(self._clear)
+        self._slayout.addWidget(self._move_up)
+        self._slayout.addWidget(self._move_down)
+        self._slayout.addItem(QSpacerItem(5, 5, QSizePolicy.Minimum,
+                                          QSizePolicy.Expanding))
+
+        self._layout = QGridLayout()
+        self._layout.addLayout(self._nlayout, 0, 0, 1, 2)
+        self._layout.addLayout(self._slayout, 1, 1, 1, 1)
+        self._layout.addWidget(self._table, 1, 0, 1, 1)
+
+        self.setLayout(self._layout)
+
+    def get_current_config(self):
+        item = self._table.item(self._table.currentRow(), 0)
+        if item is None:
+            raise ValueError('No current item to return.')
+        return self._table.currentRow()+1, item.name, item.config
+
+    def set_editor_widget(self, widget):
+        if isinstance(widget, ConfigEditorWidget):
+            self._editor_widget = widget
+        else:
+            raise ValueError('The given widget is not a ConfigEditorWidget'
+                             ' instace.')
+
+    def _edit(self):
+        try:
+            order, name, config = self.get_current_config()
+            self._editor_widget.load_config(order, name, config)
+        except ValueError:
+            return
+
+    def _move_row(self, direction):
+        """Direction is +1 down and -1 up"""
+        curr = self._table.currentRow()
+        s_wdg = self._table.takeItem(curr)
+        d_wdg = self._table.takeItem(curr+direction)
+
+        self._table.setItem(curr, 0, d_wdg)
+        self._table.setItem(curr+direction, 0, s_wdg)
+
+    def set_config(self, order, name, config):
+        if self._table.rowCount() < order:
+            self._table.setRowCount(order)
+        self._table.setItem(order-1, 0, DisplayItemWidget(name, config))
+
+
+class MainWindow(QDialog):
+    def __init__(self, parent=None):
+        super(QDialog, self).__init__(parent=parent)
+        self.init_layout()
+
+        self.list_configs = []
+
+    def init_layout(self):
+        self._layout = QGridLayout(self)
+
+        self._config = ConfigEditorWidget()
+        self._list = ListWidget()
+        self._config.set_config_list_widget(self._list)
+        self._list.set_editor_widget(self._config)
+
+        self._layout.addWidget(self._config, 0, 0, 1, 1)
+        self._layout.addWidget(self._list, 0, 1, 1, 1)
+
+        self.setLayout(self._layout)
+
+
+if __name__ == '__main__':
+    import sys
+    app = QApplication(sys.argv)
+    dialog = MainWindow()
+    sys.exit(dialog.exec_())

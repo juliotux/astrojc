@@ -49,7 +49,8 @@ class Input(object):
         return self.get_value() not in (empty_value, None)
 
     def set_value(self, value):
-        print('Setting value {} for this node.'.format(value))
+        self.node.log.debug('Setting value {} for input {} of {} node.'
+                            ''.format(value, self.name, self.node.name))
         self._value = value
 
     def get_value(self):
