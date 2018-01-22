@@ -6,13 +6,11 @@ from qtpy.QtWidgets import (QApplication, QDialog, QGridLayout, QLabel,
                             QListWidgetItem, QMenu, QTableWidgetItem,
                             QTableWidget, QAbstractItemView,
                             QSizePolicy, QSpacerItem, QHBoxLayout,
-                            QVBoxLayout)
+                            QVBoxLayout, QCheckBox)
 from functools import partial
 from os import path
 from collections import OrderedDict
-
-
-# TODO: Open/Save files, them its finished!
+import json
 
 
 class ConfigItemText(QWidget):
@@ -21,12 +19,12 @@ class ConfigItemText(QWidget):
 
         self._layout = QHBoxLayout()
 
-        self._field_name = QLineEdit('field name')
+        self._field_name = QLineEdit('<field name>')
         self._field_name.setSizePolicy(QSizePolicy.Minimum,
                                        QSizePolicy.Minimum)
         if default_name is not None:
             self._field_name.setText(str(default_name))
-        self._field_value = QLineEdit('field value')
+        self._field_value = QLineEdit('<field value>')
         if default_value is not None:
             self._field_value.setText(str(default_value))
 
@@ -51,11 +49,11 @@ class ConfigItemText(QWidget):
             return self._field_value.text()
 
 
-class ConfigItemFiles(QWidget):
+class ConfigItemList(QWidget):
     def __init__(self, parent=None, default_name=None, default_value=None):
         super(QWidget, self).__init__(parent=parent)
 
-        self._field_name = QLineEdit('field name')
+        self._field_name = QLineEdit('<field name>')
         self._field_name.setSizePolicy(QSizePolicy.Minimum,
                                        QSizePolicy.Minimum)
         if default_name is not None:
@@ -129,6 +127,41 @@ class ConfigItemFiles(QWidget):
             self.add_file(i)
 
 
+class ConfigItemBool(QWidget):
+    def __init__(self, parent=None, default_name=None, default_value=None):
+        super(QWidget, self).__init__(parent=parent)
+
+        self._field_name = QLineEdit('<field name>')
+        if default_name is not None:
+            try:
+                self._field_name.setText(default_name)
+            except Exception as e:
+                pass
+
+        self._field_value = QCheckBox()
+        if default_value is not None:
+            try:
+                self._field_value.setChecked(bool(default_value))
+            except Exception as e:
+                pass
+
+        self._layout = QHBoxLayout()
+        self._layout.addWidget(self._field_name)
+        self._layout.addWidget(self._field_value)
+        self._layout.addItem(QSpacerItem(5, 5, QSizePolicy.Expanding,
+                                         QSizePolicy.Minimum))
+
+        self.setLayout(self._layout)
+
+    @property
+    def name(self):
+        return self._field_name.text()
+
+    @property
+    def value(self):
+        return self._field_value.isChecked()
+
+
 class ConfigEditorWidget(QWidget):
     def __init__(self, parent=None):
         super(QWidget, self).__init__(parent=parent)
@@ -143,9 +176,13 @@ class ConfigEditorWidget(QWidget):
         self._add_text_action = self._add_menu.addAction('Add text or number')
         self._add_text_action.triggered.connect(partial(self._add,
                                                         type='text'))
-        self._add_file_action = self._add_menu.addAction('Add list field')
-        self._add_file_action.triggered.connect(partial(self._add,
-                                                        type='file'))
+        self._add_bool_action = self._add_menu.addAction('Add boolean')
+        self._add_bool_action.triggered.connect(partial(self._add,
+                                                        type='bool'))
+        self._add_list_action = self._add_menu.addAction('Add list field')
+        self._add_list_action.triggered.connect(partial(self._add,
+                                                        type='list'))
+
         self._add_field_button = QPushButton(QIcon.fromTheme('list-add'), '')
         self._add_field_button.setMenu(self._add_menu)
         self._remove_field_button = QPushButton(QIcon.fromTheme('list-remove'),
@@ -195,24 +232,28 @@ class ConfigEditorWidget(QWidget):
         for i, v in config.items():
             if isinstance(v, (list, tuple)):
                 self._add('file', i, v)
+            elif isinstance(v, bool):
+                self._add('bool', i, v)
             else:
                 self._add('text', i, v)
 
     def _add(self, type, default_name=None, default_value=None):
         if type == 'text':
-            i = QListWidgetItem(self._list)
             item = ConfigItemText(default_name=default_name,
                                   default_value=default_value)
-            i.setSizeHint(item.sizeHint())
-            self._list.addItem(i)
-            self._list.setItemWidget(i, item)
-        elif type == 'file':
-            i = QListWidgetItem(self._list)
-            item = ConfigItemFiles(default_name=default_name,
-                                   default_value=default_value)
-            i.setSizeHint(item.sizeHint())
-            self._list.addItem(i)
-            self._list.setItemWidget(i, item)
+        elif type == 'list':
+            item = ConfigItemList(default_name=default_name,
+                                  default_value=default_value)
+        elif type == 'bool':
+            item = ConfigItemBool(default_name=default_name,
+                                  default_value=default_value)
+        else:
+            raise ValueError('Unrecognized field type.')
+
+        i = QListWidgetItem(self._list)
+        i.setSizeHint(item.sizeHint())
+        self._list.addItem(i)
+        self._list.setItemWidget(i, item)
 
         return item
 
@@ -281,23 +322,29 @@ class ListWidget(QWidget):
 
         self._open_button = QPushButton(QIcon.fromTheme('document-open'),
                                         'Load File')
+        self._open_button.clicked.connect(self._load)
         self._save_button = QPushButton(QIcon.fromTheme('document-save'),
                                         'Save as')
+        self._save_button.clicked.connect(self._save)
         self._edit_item = QPushButton(QIcon.fromTheme('go-previous'),
                                       'Edit')
         self._edit_item.clicked.connect(self._edit)
         self._clear = QPushButton(QIcon.fromTheme('edit-clear'),
                                   '')
         self._clear.setToolTip('Clear the list')
+        self._clear.clicked.connect(self._table.clear)
         self._remove_item = QPushButton(QIcon.fromTheme('list-remove'),
                                         '')
         self._remove_item.setToolTip('Remove the current item from list')
+        self._remove_item.clicked.connect(self._remove)
         self._move_up = QPushButton(QIcon.fromTheme('go-up'),
                                     '')
         self._move_up.setToolTip('Move the current item up')
+        self._move_up.clicked.connect(partial(self._move_row, direction=-1))
         self._move_down = QPushButton(QIcon.fromTheme('go-down'),
                                       '')
         self._move_down.setToolTip('Move the current item down')
+        self._move_down.clicked.connect(partial(self._move_row, direction=1))
 
         self._nlayout = QHBoxLayout()
         self._nlayout.addWidget(self._edit_item)
@@ -344,16 +391,53 @@ class ListWidget(QWidget):
     def _move_row(self, direction):
         """Direction is +1 down and -1 up"""
         curr = self._table.currentRow()
-        s_wdg = self._table.takeItem(curr)
-        d_wdg = self._table.takeItem(curr+direction)
+        s_wdg = self._table.takeItem(curr, 0)
+        d_wdg = self._table.takeItem(curr+direction, 0)
 
         self._table.setItem(curr, 0, d_wdg)
         self._table.setItem(curr+direction, 0, s_wdg)
+
+        self._table.setCurrentItem(s_wdg)
+
+    def _remove(self):
+        items = self._table.selectedItems()
+        for i in items:
+            self._table.removeRow(self._table.row(i))
 
     def set_config(self, order, name, config):
         if self._table.rowCount() < order:
             self._table.setRowCount(order)
         self._table.setItem(order-1, 0, DisplayItemWidget(name, config))
+
+    def load(self, filename):
+        data = json.load(open(filename, 'r'), object_hook=OrderedDict)
+        for i, v in data.items():
+            if not isinstance(v, (dict, OrderedDict)):
+                raise ValueError('This json file does not correspond to '
+                                 'a valid config file.')
+
+        self._table.clear()
+        self._table.setRowCount(0)
+
+        for i, v in data.items():
+            last = self._table.rowCount()
+            self.set_config(last+1, i, v)
+
+    def save(self, filename):
+        out = OrderedDict()
+        for i in range(self._table.rowCount()):
+            item = self._table.item(i, 0)
+            out[item.name] = item.config
+
+        json.dump(out, open(filename, 'w'))
+
+    def _load(self):
+        f = QFileDialog.getOpenFileName()[0]
+        self.load(f)
+
+    def _save(self):
+        f = QFileDialog.getSaveFileName()[0]
+        self.save(f)
 
 
 class MainWindow(QDialog):
