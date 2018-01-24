@@ -18,7 +18,7 @@ from ..logging import log
 
 
 __all__ = ['AstrometrySolver', 'solve_astrometry_xy', 'solve_astrometry_image',
-           'create_xyls']
+           'create_xyls', 'wcs_xy2radec', 'wcs_radec2xy']
 
 
 def solve_decimal(string):
@@ -275,7 +275,7 @@ def create_xyls(fname, x, y, flux, imagew, imageh, header=None, dtype='f8'):
     f.writeto(fname)
 
 
-def solve_astrometry_xy(x, y, flux, header, image_width, image_height,
+def solve_astrometry_xy(x, y, flux, image_header, image_width, image_height,
                         return_wcs=False, image_params={}):
     '''
     image_params are:
@@ -288,7 +288,8 @@ def solve_astrometry_xy(x, y, flux, header, image_width, image_height,
         radius: maximum search radius
     '''
     f = NamedTemporaryFile(suffix='.xyls')
-    create_xyls(f.name, x, y, flux, image_width, image_height, header=header)
+    create_xyls(f.name, x, y, flux, image_width, image_height,
+                header=image_header)
     solved_header = AstrometrySolver().solve_field(f.name, wcs=return_wcs,
                                                    image_params=image_params)
     return solved_header
@@ -307,3 +308,14 @@ def solve_astrometry_image(filename, return_wcs=False, image_params={}):
     """
     return AstrometrySolver().solve_field(filename, wcs=return_wcs,
                                           image_params=image_params)
+
+
+def wcs_xy2radec(x, y, wcs):
+    """Convert x and y coordinates to RA and DEC using a WCS object."""
+    return wcs.all_pix2world(x, y, 0.0, ra_dec_order=True)
+
+
+def wcs_radec2xy(ra, dec, wcs):
+    """Convert RA and DEC coordinates to x and y using a WCS object."""
+    wcs = WCS()
+    return wcs.all_world2pix(ra, dec, ra_dec_order=True)

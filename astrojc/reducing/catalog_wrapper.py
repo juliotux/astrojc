@@ -6,85 +6,32 @@ from astropy import units as u
 import functools
 import bottleneck as bn
 import numpy as np
+from scipy.spatial.ckdtree import cKDTree
+import json
+import os
 
-# TODO: reimplement it here
-"""
-def _do_match_catalog(x, y, wcs, catalog_name, filter, limit_angle='2 arcsec'):
-    '''
-    ra, dec => degrees
-    catalog => Table
-    '''
-    ra, dec = xy2radec(x, y, wcs)
-
-    med_ra = (np.max(ra) + np.min(ra))/2
-    med_dec = (np.max(dec) + np.min(dec))/2
-    med_coord = SkyCoord(med_ra, med_dec, unit=('degree', 'degree'), frame='icrs').to_string('hmsdms')
-    r = np.max([np.max(np.abs(ra - med_ra)), np.max(np.abs(dec - med_dec))])*u.degree
-
-    if catalog_name == 'Simbad':
-        cat = from_simbad(med_coord, r, filter)
-    elif catalog_name == 'UCAC4':
-        ks = {'fluxk': '%smag' % filter, 'fluxek': 'e_%smag' % filter}
-        cat = from_ucac4(med_coord, r, **ks)
-    elif catalog_name == 'Denis':
-        ks = {'fluxk': '%smag' % filter, 'fluxek': 'e_%smag' % filter}
-        cat = from_denis(med_coord, r, **ks)
-    elif catalog_name == 'BON10':
-        ks = {'fluxk': '%smag' % filter, 'fluxek': 'e_%smag' % filter}
-        cat = from_bon10(med_coord, r, **ks)
-    elif catalog_name == '2MASS':
-        ks = {'fluxk': '%smag' % filter, 'fluxek': 'e_%smag' % filter}
-        cat = from_2mass(med_coord, r, **ks)
+from .astrometry_wrapper import wcs_xy2radec as xy2radec
+from ..logging import log
+from ..config import get_config_file
 
 
-    idx, dist, dummy = match_coordinates_sky(SkyCoord(ra, dec, unit=('degree', 'degree'), frame='icrs'),
-                                             SkyCoord(cat['ra'], cat['dec'], unit=('degree', 'degree'), frame='icrs'))
-
-    id = np.zeros(len(ra), dtype='S32')
-    mag = np.zeros(len(ra), dtype='f8')
-    mag_err = np.zeros(len(ra), dtype='f8')
-    mag.fill(np.nan)
-    mag_err.fill(np.nan)
-
-    lim = Angle(limit_angle)
-    for i in range(len(ra)):
-        if dist[i] <= lim:
-            id[i] = cat['id'][idx[i]]
-            mag[i] = cat['flux'][idx[i]]
-            mag_err[i] = cat['flux_error'][idx[i]]
-
-    return ra, dec, id, mag, mag_err
-
-def _fix_names(id, ra, dec, limit_angle='2 arcsec'):
-    t = ascii.read('./objects.dat')
-    s = SkyCoord(t['RA'], t['Dec'], unit=(u.hourangle, u.degree))
-    rac, decc = s.ra.degree, s.dec.degree
-    lim = Angle(limit_angle).degree
-
-    kd = cKDTree(list(zip(rac, decc)))
-    dist, idx = kd.query(list(zip(ra, dec)), distance_upper_bound=lim)
-
-    for k in range(len(id)):
-        if dist[k] <= lim:
-            log.info('Renaming star %s to %s' % (id[k], t['Star'][idx[k]]))
-            id[k] = t['Star'][idx[k]].astype(id.dtype)
-
-    return id, t
-"""
+__all__ = ['Catalog', 'from_simbad', 'from_vizier', 'from_table',
+           'solve_photometry_montecarlo', 'solve_photometry_median',
+           'solve_photometry_average']
 
 
 def from_simbad(center, radius, filter):
     s = Simbad()
-    s.add_votable_fields('fluxdata(%s)' % filter)
+    s.add_votable_fields('fluxdata({filter})'.format(filter=filter))
 
     query = s.query_region(center, radius)
 
     id = query['MAIN_ID'].data
     coords = SkyCoord(query['RA'], query['DEC'], unit=(u.hourangle, u.degree))
     try:
-        flux = query['FLUX_%s' % filter].data
-        flux_error = query['FLUX_ERROR_%s' % filter].data
-    except:
+        flux = query['FLUX_{filter}'.format(filter=filter)].data
+        flux_error = query['FLUX_ERROR_{filter}'.format(filter=filter)].data
+    except NameError:
         flux = np.array([np.nan]*len(id))
         flux_error = np.array([np.nan]*len(id))
     ra, dec = coords.ra.degree, coords.dec.degree
@@ -95,28 +42,34 @@ def from_simbad(center, radius, filter):
                                   ['S32']+['f8']*4))))
 
 
-def from_vizier(table, center, radius, idk='ID', rak='RAJ2000', deck='DEJ2000',
-                fluxk='FLUX', fluxek='FLUX_ERROR',
-                prepend_idk=True):
+def from_vizier(table, center, radius, id_key='ID', ra_key='RAJ2000',
+                dec_key='DEJ2000', flux_key='FLUX',
+                flux_error_key=None, prepend_id_key=True):
     v = Vizier()
     v.ROW_LIMIT = -1
 
-    try:
-        query = v.query_region(center, radius=Angle(radius), catalog=table)[0]
-    except:
-        raise AssertError('Catalog unable.')
+    query = v.query_region(center, radius=Angle(radius), catalog=table)[0]
 
-    id = query[idk].data.astype('S32')
-    if idk not in ['ID', 'MAIN_ID']:
+    id = query[id_key].data.astype('S32')
+    if id_key not in ['ID', 'MAIN_ID']:
         for i in range(len(id)):
-            id[i] = "%s %s" % (idk, id[i])
-    coords = SkyCoord(query[rak], query[deck], unit=(u.hourangle, u.degree))
+            id[i] = "{id_key} {id}".format(id_key=id_key, id=id[i])
+
+    # FIXME: we assume, at now, that the units are hexa
+    coords = SkyCoord(query[ra_key], query[dec_key],
+                      unit=(u.hourangle, u.degree))
+
     try:
-        flux = query[fluxk].data
-        flux_error = query[fluxek].data
-    except:
+        flux = query[flux_key].data
+    except NameError:
         flux = np.array([np.nan]*len(id))
-        flux_error = np.array([np.nan]*len(id))
+
+    if flux_error_key is not None:
+        try:
+            flux_error = query[flux_error_key].data
+        except NameError:
+            flux_error = np.array([np.nan]*len(id))
+
     ra, dec = coords.ra.degree, coords.dec.degree
 
     return np.array(list(zip(id, ra, dec, flux, flux_error)),
@@ -125,56 +78,275 @@ def from_vizier(table, center, radius, idk='ID', rak='RAJ2000', deck='DEJ2000',
                                   ['S32']+['f8']*4))))
 
 
-def from_bon10(center, radius, **ks):
-    f1 = functools.partial(from_vizier, 'J/AJ/140/416/table3', idk='Name',
-                           prepend_idk=False)
-    f2 = functools.partial(from_vizier, 'J/AJ/138/1003/table3', idk='Name',
-                           prepend_idk=False)
-    try:
-        return np.append(f1(center, radius, **ks), f2(center, radius, **ks))
-    except:
-        try:
-            return f1(center, radius, **ks)
-        except:
-            return f2(center, radius, **ks)
+class Catalog():
+    _mandatory = ['filters', 'prepend_id_key', 'id_key', 'ra_key',
+                  'dec_key', 'flux_key', 'flux_unit']
+    _vizier_mandatory = ['vizier_table']
+    _simbad_mandatory = []
+    _local_mandatory = ['file_name']
+    _optional_keys = ['flux_error_key', 'comment', 'ads_ref_string']
+    """Container for store the definitions of a catalog and related routines"""
+    def __init__(self, definitions):
+        """
+        definitions : dict_like
+            A dictionary containing the needed informations for the catalog.
+            The mandatory keys are:
+            - filters : list of available filters for the catalog
+                like ["B", "V", "g", "r", "i"]
+            - source : the catalog source
+                can be "local", "vizier", "simbad"
+            - vizier_table : the table id in vizier_table (if source=="vizier")
+                like "I/322A"
+            - file_name : the local file name (if source=="local")
+                like "/home/user/mytable.dat"
+            - prepend_id_key : True if you want to prepend the id_key to
+            the name of the star in the output id in query. Default is False.
+            - id_key : key for the column containing the ID or name of the
+            star.
+                like "UCAC4"
+            - ra_key : key for the column containing the RA of the star.
+                like "RAJ2000"
+            - dec_key : key for the column containing the DEC of the star.
+                like "DEJ2000"
+            - flux_key : key for the column containing the flux of the star.
+            The string {filter} will be replaced by the filter name passed to
+            query functions.
+                like "{filter}mag",
+            - flux_error_key : key for the column containing the flux error
+            of the star. The string {filter} will be replaced by the filter
+            name passed to query functions. Optional.
+                like "e_{filter}mag",
+            - flux_unit : key for the column containing the flux unit of the
+            star.
+                can be ["mag", "flux"]
+            - ads_ref_string : reference string for ADS. Optional.
+                like "2013AJ....145...44Z"
+            - comment : Aditional comment. Optional.
+
+        The catalog definitions can be loaded from a json file using
+        Catalog.load_from_json(filename) function.
+        """
+        def _check_key(key, list_of_keys):
+            if key not in list_of_keys:
+                raise ValueError("{} mandatory key not found in"
+                                 " definitions.".format(key))
+
+        _check_key('source', definitions.keys())
+
+        source = definitions['source']
+        if source != 'simbad':
+            # simbad catalog do not need all other mandatory keys
+            for i in self._mandatory:
+                _check_key(i, definitions.keys())
+
+        if source == 'vizier':
+            for i in self._vizier_mandatory:
+                _check_key(i, definitions.keys())
+        elif source == 'simbad':
+            for i in self._simbad_mandatory:
+                definitions['flux_unit'] = 'mag'
+                _check_key(i, definitions.keys())
+        elif source == 'local':
+            for i in self._local_mandatory:
+                _check_key(i, definitions.keys())
+        else:
+            raise ValueError("source {} not supported.".format(source))
+
+        for i, v in definitions.items():
+            if i in list(self._mandatory + self._simbad_mandatory +
+                         self._vizier_mandatory + self._local_mandatory +
+                         self._optional_keys):
+                self.__setattr__(i, v)
+
+    @staticmethod
+    def load_from_json(filename, key=None):
+        j = json.load(open(filename, 'r'))
+        if key is not None:
+            j = j[key]
+        return Catalog(j)
+
+    def _query(self, ra, dec, filter, radius):
+        if self.source == 'simbad':
+            return from_simbad(center=SkyCoord(ra, dec,
+                                               unit=(u.degree, u.degree)),
+                               filter=filter, radius=radius)
+        else:
+            if filter not in self.filters:
+                raise ValueError('Filter {} is not available.'.format(filter))
+
+        if self.source == 'vizier':
+            kwargs = dict()
+            for i in self._mandatory - ['filters', 'flux_unit']:
+                kwargs[i] = self.__dict__[i]
+            return from_vizier(center=SkyCoord(ra, dec,
+                                               unit=(u.degree, u.degree)),
+                               filter=filter, radius=radius, **kwargs)
+        elif self.source == 'local':
+            raise NotImplementedError()
+        else:
+            raise ValueError('Source not available. This should not happen!')
+
+    def query_id_mag(self, ra, dec, filter, limit_angle='2 arcsec'):
+        """Query the photometry parameters of a list of RA and DEC of objects
+        in this catalog.
+
+        Return: id, mag, mag_err (or fluxes)
+        """
+        center_ra = (np.max(ra) + np.min(ra))/2
+        center_dec = (np.max(dec) + np.min(dec))/2
+        radius = np.max(np.max(ra) - np.min(ra),
+                        np.max(dec) - np.min(dec))*u.degree
+
+        cat = self._query(center_ra, center_dec, filter, radius)
+
+        i, d, _ = match_coordinates_sky(SkyCoord(ra, dec, unit=('degree',
+                                                                'degree'),
+                                                 frame='icrs'),
+                                        SkyCoord(cat['ra'], cat['dec'],
+                                                 unit=('degree', 'degree'),
+                                                 frame='icrs'))
+
+        id = np.zeros(len(ra), dtype='S32')
+        mag = np.zeros(len(ra), dtype='f8')
+        mag_err = np.zeros(len(ra), dtype='f8')
+        mag.fill(np.nan)
+        mag_err.fill(np.nan)
+
+        lim = Angle(limit_angle)
+        for k in range(len(ra)):
+            if d[k] <= lim:
+                id[k] = cat['id'][i[k]]
+                mag[k] = cat['flux'][i[k]]
+                mag_err[k] = cat['flux_error'][i[k]]
+
+        return id, mag, mag_err
 
 
-from_ucac4 = functools.partial(from_vizier, 'I/322A', idk='UCAC4')
-from_denis = functools.partial(from_vizier, 'B/denis', idk='DENIS')
-from_2mass = functools.partial(from_vizier, 'II/246', idk='_2MASS')
+class PhotometrySolver():
+    "Solve the photometry of a field by median or montecarlo comparisions."
+    # TODO: Unfinished. Think better on it.
+    def __init__(self, filter, catalog, catalog_config_file=None):
+        """catalog can be a string, from predefineds catalog in
+        ~/config/.astrojc/photometry_catalogs.json, or a Catalog object."""
+        if isinstance(catalog, Catalog):
+            self._catalog = catalog
+        elif isinstance(catalog, string):
+            try:
+                if catalog_config_file is not None:
+                    f = get_config_file('photometry_catalogs.json')
+                else:
+                    f = catalog_config_file
+                self._catalog = Catalog.load_from_json(f)
+            except FileNotFoundError:
+                raise('File {} not found. Please check its existence to '
+                      'use predefined catalogs.'.format(f))
+            except Exception as e:
+                raise('This file is not a valid config catalog.'
+                      ' Due to: {}'.format(e))
+
+        self._filter = filter
+
+        self._operator = None
+        self._inverse_operator = None
+
+    def _to_cat_scale(self, data, data_error, data_scale):
+        """Transform the user data to the same unit of catalog data."""
+        target = self._catalog.flux_unit
+        if target == 'mag':
+            self._operator = lambda x, y: x - y
+            self._inverse_operator = lambda x, y: x + y
+            if data_unit in ['linear']:
+                if data_error is None:
+                    err = None
+                else:
+                    err = 10.086*np.divide(flux_error, flux)
+                return -2.5*np.log10(data), err
+            elif data_unit in ['log']:
+                if data_error is None:
+                    err = None
+                else:
+                    err = np.multiply(2.5, data_error)
+                return np.multiply(-2.5, data), err
+            elif data_unit in ['mag']:
+                return data, data_error
+        elif target == 'log':
+            self._operator = lambda x, y: x - y
+            self._inverse_operator = lambda x, y: x + y
+            if data_unit in ['linear', 'adu', 'count', 'flux']:
+                if data_error is None:
+                    err = None
+                else:
+                    err = 0.4342*np.divide(flux_error, flux)
+                return np.log10(data), err
+            elif data_unit in ['log10', 'log']:
+                return data, data_error
+            elif data_unit in ['mag']:
+                if data_error is None:
+                    err = None
+                else:
+                    err = np.divide(flux_error, 2.5)
+                return np.divide(data, -2.5), err
+        elif target == 'linear':
+            self._operator = lambda x, y: x / y
+            self._inverse_operator = lambda x, y: x * y
+            if data_unit in ['linear', 'adu', 'count', 'flux']:
+                return data, data_error
+            elif data_unit in ['log10', 'log']:
+                if data_error is None:
+                    err = None
+                else:
+                    err = 0.4342 * np.power(10, data_error)
+                return 10**data, err
+            elif data_unit in ['mag']:
+                if data_error is None:
+                    err = None
+                else:
+                    err = 0.921*np.exp(-0.921*data_error)
+                return np.power(10, -0.4*data)
+        else:
+            raise NotImplementedError
+
+    def solve_median(self, ra, dec, flux, flux_error=None, mag_limits=(5, 18),
+                     flux_unit='linear'):
+        """Solve the photometry of a dataset by median comparision."""
+
+    def solve_montecarlo(fluxes, flux_error, references, limits=(5, 18),
+                         n_iter=100, n_stars=0.2):
+        """Solve the photometry of a dataset by montecarlo comparision.""""
 
 
-def match_catalog(sources, catalog):
-    '''
-    everything in degrees:
-    sources = (ra, dec)
-    catalog = (ra, dec)
-    '''
-
-    s_cat = SkyCoord(ra=sources[0], dec=sources[1], frame='icrs',
-                     unit=('degree', 'degree'))
-    r_cat = SkyCoord(ra=catalog[0], dec=catalog[1], frame='icrs',
-                     unit=('degree', 'degree'))
-
-    idx, sep2d, sep3d = match_coordinates_sky(s_cat, r_cat, 1)
-    return idx, sep2d
-
-
-def median_comparision(fluxes, flux_error, references, limits=(5, 18)):
+def solve_photometry_median(fluxes, flux_error, references, limits=(5, 18)):
     mags = -2.5*np.log10(fluxes)
-    for i in range(len(references)):
-        if not limits[0] <= references[i] <= limits[1]:
-            references[i] = np.nan
+
+    a, b = limits
+    a, b = a, b if a < b else b, a
+    args = np.where(np.logical_and(references>=a, references<=b))
+
     diff = references - mags
-    dif = bn.nanmedian(diff)
-    err = bn.nanstd(diff)
+    dif = np.nanmedian(diff[args])
+    err = np.nanstd(diff[args])
 
     error = 1.086*((flux_error + np.sqrt(fluxes))/fluxes) + err
     return mags + dif, error
 
 
-def montecarlo_comparision(fluxes, flux_error, references, limits=(5, 18),
-                           n_iter=100, n_stars=0.5):
+def solve_photometry_average(fluxes, flux_error, references, limits=(5, 18)):
+    mags = -2.5*np.log10(fluxes)
+
+    a, b = limits
+    a, b = a, b if a < b else b, a
+    args = np.where(np.logical_and(references>=a, references<=b))
+
+    diff = references - mags
+    dif = np.nanaverage(diff[args], weights=np.divide(1, flux_error[args]))
+    err = np.nanstd(diff[args])
+
+    error = 1.086*((flux_error + np.sqrt(fluxes))/fluxes) + err
+    return mags + dif, error
+
+
+def solve_photometry_montecarlo(fluxes, flux_error, references, limits=(5, 18),
+                                n_iter=100, n_stars=0.2):
     mags = -2.5*np.log10(fluxes)
 
     if float(n_stars).is_integer():
@@ -186,8 +358,9 @@ def montecarlo_comparision(fluxes, flux_error, references, limits=(5, 18),
     for i in range(n_iter):
         for j in range(len(fluxes)):
             choices = np.random.choice(len(fluxes), n_stars)
-            iter_mags[j,i] = mags[j] + bn.nanmedian(references[choices] - mags[choices])
+            iter_mags[j, i] = mags[j] + bn.nanmedian(references[choices] -
+                                                     mags[choices])
 
-    result = bn.nanmedian(iter_mags, axis=1)
-    errors = bn.nanstd(iter_mags, axis=1)
+    result = np.nanmedian(iter_mags, axis=1)
+    errors = np.nanstd(iter_mags, axis=1)
     return result, errors

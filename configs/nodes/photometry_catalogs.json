@@ -1,5 +1,4 @@
 {
-    "photometry_reference_catalogs" : {
         "UCAC4" : {
             "filters" : ["B", "V", "g", "r", "i"],
             "source" : "vizier",
@@ -84,5 +83,4 @@
             "ads_ref_string_key" : "FLUX_BIBCODE_V",
             "comment" : "flux values from different sources"
         }
-    }
 }
