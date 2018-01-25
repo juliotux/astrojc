@@ -3,40 +3,55 @@ import numpy as np
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import gaussian_sigma_to_fwhm
 from astropy.modeling.fitting import LevMarLSQFitter
+from astropy.table import Table
 
 from photutils import CircularAperture, CircularAnnulus
 from photutils import aperture_photometry as photutils_aperture
 from photutils import DAOStarFinder, IRAFStarFinder
 from photutils.psf import IntegratedGaussianPRF, DAOPhotPSFPhotometry
 
-from ..logging import log
+from ..logging import log as logger
+from .moffat_psf import Moffat2D_parallel as Moffat2D
 
-def find_sources(data, fwhm, threshold=None, bkg=None, rms=None, snr=None,
-                 method='daofind'):
-    '''method : ('daofind', 'iraf')'''
+
+def find_sources(data, fwhm, threshold=None, bkg=0.0, rms=None, snr=None,
+                 method='daofind', **kwargs):
+    '''method : ('daofind', 'iraf')
+
+    sky will be subtracted from the data
+
+    kwargs are DAOStarFinder or IRAFStarFinder, like sharphi, sharplo, roundhi,
+    roundlo
+    '''
 
     if threshold is None:
-        if bkg is None or snr is None or snr is None:
+        if rms is None or snr is None:
             raise ValueError('You must give a threshold or bkg, snr and rms.')
         else:
-            threshold = bkg + snr*rms
+            threshold = snr*rms
+
     if method == 'daofind':
-        find = DAOStarFinder(fwhm=fwhm, threshold=threshold)
+        find = DAOStarFinder(fwhm=fwhm, threshold=threshold, sky=bkg,
+                             exclude_border=True, **kwargs)
     elif method == 'iraf':
-        find = IRAFStarFinder(fwhm=fwhm, threshold=threshold)
+        find = IRAFStarFinder(fwhm=fwhm, threshold=threshold, sky=bkg,
+                              exclude_border=True, **kwargs)
     else:
         raise ValueError('Method {} unrecognized.'.format(method))
     i = find(data)
 
-    s_dt = np.dtype([('x','f8'), ('y','f8'), ('flux','f8'), ('sharpness','f8'),
-                    ('roundness','f8'), ('sky','f8'),('peak','f8')])
+    s_dt = np.dtype([('x', 'f8'), ('y', 'f8'), ('flux', 'f8'),
+                     ('sharpness', 'f8'), ('roundness', 'f8'), ('sky', 'f8'),
+                     ('peak', 'f8')])
     return np.array(list(zip(i['xcentroid'], i['ycentroid'], i['flux'],
                              i['sharpness'], i['roundness1'], i['sky'],
                              i['peak'])), s_dt)
 
+
 def calculate_background(data, sigma=3, iters=1):
     mean, median, std = sigma_clipped_stats(data, sigma=sigma, iters=iters)
     return 2.5*median - 1.5*mean, std
+
 
 def aperture_photometry(data, x, y, r, r_in, r_out, err=None, **kwargs):
     ap_c = CircularAperture(zip(x, y), r=r)
@@ -46,9 +61,10 @@ def aperture_photometry(data, x, y, r, r_in, r_out, err=None, **kwargs):
 
     flux = ap['aperture_sum'] - (ap_c.area()/ap_a.area())*ann['aperture_sum']
 
-    p_dt = np.dtype([('x','f8'), ('y','f8'), ('flux','f8'),
+    p_dt = np.dtype([('x', 'f8'), ('y', 'f8'), ('flux', 'f8'),
                      ('flux_error', 'f8')])
     return np.array(list(zip(x, y, flux, ap['aperture_sum_err'])), p_dt)
+
 
 def psf_photometry(data, x=None, y=None, sigma_psf=1.0, snr=10, box_size=20,
                    model='gaussian', niters=1):
@@ -57,21 +73,24 @@ def psf_photometry(data, x=None, y=None, sigma_psf=1.0, snr=10, box_size=20,
 
     bkg, rms = calculate_background(data, 3, 1)
 
-    photargs = {'crit_separation' : sigma_psf*2,
-                'threshold' : snr*rms,
-                'fwhm' : sigma_psf*gaussian_sigma_to_fwhm,
+    photargs = {'crit_separation': sigma_psf*2,
+                'threshold': snr*rms,
+                'fwhm': sigma_psf*gaussian_sigma_to_fwhm,
                 'aperture_radius': sigma_psf*gaussian_sigma_to_fwhm,
                 'fitter': LevMarLSQFitter(),
-                'niters' : niters,
-                'sharplo' : 0.0,
-                'sharphi' : 2.0,
-                'roundlo' : -2.0,
-                'roundhi' : 2.0,
-                'fitshape' : (box_size, box_size)}
+                'niters': niters,
+                'sharplo': 0.0,
+                'sharphi': 2.0,
+                'roundlo': -2.0,
+                'roundhi': 2.0,
+                'fitshape': (box_size, box_size)}
 
     if model == 'gaussian':
         photargs['psf_model'] = IntegratedGaussianPRF(sigma=sigma_psf)
         photargs['psf_model'].sigma.fixed = False
+    elif model == 'moffat':
+        photargs['psf_model'] = Moffat2D(alpha=0.5, gamma=1.5)
+        photargs['psf_model'].alpha.fixed = False
     else:
         raise ValueError('Model not supported.')
 
