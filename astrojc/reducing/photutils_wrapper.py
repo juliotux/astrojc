@@ -73,7 +73,7 @@ def psf_photometry(data, x=None, y=None, sigma_psf=1.0, snr=10, box_size=20,
 
     bkg, rms = calculate_background(data, 3, 1)
 
-    photargs = {'crit_separation': sigma_psf*2,
+    photargs = {'crit_separation': sigma_psf*5,
                 'threshold': snr*rms,
                 'fwhm': sigma_psf*gaussian_sigma_to_fwhm,
                 'aperture_radius': sigma_psf*gaussian_sigma_to_fwhm,

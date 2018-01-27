@@ -1,5 +1,6 @@
 from astropy.coordinates.angles import Angle
 from astropy.coordinates import SkyCoord, match_coordinates_sky
+from astropy.io import ascii as asci
 from astroquery.simbad import Simbad
 from astroquery.vizier import Vizier
 from astropy import units as u
@@ -51,7 +52,7 @@ def from_vizier(table, center, radius, id_key='ID', ra_key='RAJ2000',
     query = v.query_region(center, radius=Angle(radius), catalog=table)[0]
 
     id = query[id_key].data.astype('S32')
-    if id_key not in ['ID', 'MAIN_ID']:
+    if prepend_id_key:
         for i in range(len(id)):
             id[i] = "{id_key} {id}".format(id_key=id_key, id=id[i])
 
@@ -71,6 +72,33 @@ def from_vizier(table, center, radius, id_key='ID', ra_key='RAJ2000',
             flux_error = np.array([np.nan]*len(id))
 
     ra, dec = coords.ra.degree, coords.dec.degree
+
+    return np.array(list(zip(id, ra, dec, flux, flux_error)),
+                    np.dtype(list(zip(['id', 'ra', 'dec', 'flux',
+                                       'flux_error'],
+                                  ['S32']+['f8']*4))))
+
+
+def from_ascii(filename, id_key=None, ra_key=None, dec_key=None, flux_key=None,
+               flux_error_key=None, prepend_id_key=False, **readkwargs):
+    """Load from a ascii local catalog, with named columns."""
+    t = asci.read(filename, **asciikwargs)
+    id = t[id_key]
+    ra = t[ra_key]
+    dec = t[dec_key]
+
+    try:
+        flux = t[flux_key]
+    except KeyError:
+        flux = [np.nan]*len(t)
+
+    try:
+        flux_error = t[flux_error_key]
+    except KeyError:
+        flux_error = [np.nan]*len(t)
+
+    if prepend_id_key:
+        id = ['{id_key} {id}'.format(id_key=id_key, id=id)]
 
     return np.array(list(zip(id, ra, dec, flux, flux_error)),
                     np.dtype(list(zip(['id', 'ra', 'dec', 'flux',
@@ -131,6 +159,8 @@ class Catalog():
                 raise ValueError("{} mandatory key not found in"
                                  " definitions.".format(key))
 
+        self._table = None
+
         _check_key('source', definitions.keys())
 
         source = definitions['source']
@@ -158,12 +188,30 @@ class Catalog():
                          self._optional_keys):
                 self.__setattr__(i, v)
 
+        if self.souce == 'local':
+            self._load_table()
+
     @staticmethod
     def load_from_json(filename, key=None):
         j = json.load(open(filename, 'r'))
         if key is not None:
             j = j[key]
         return Catalog(j)
+
+    @staticmethod
+    def load_from_ascii(filename, id_key, ra_key, dec_key, flux_key,
+                        flux_error_key, flux_unit, **readkwargs):
+        new = Catalog({'souce': 'local', 'file_name': filename,
+                       'ra_key': ra_key, 'dec_key': dec_key,
+                       'flux_key': flux_key, 'flux_error_key': flux_error_key,
+                       'flux_unit': flux_unit})
+
+    def _load_table(self):
+        self._table = from_ascii(filename, id_key=self.id_key,
+                                 ra_key=self.ra_key, dec_key=self.dec_key,
+                                 flux_key=self.flux_key,
+                                 flux_error_key=self.flux_error_key,
+                                 **readkwargs)
 
     def _query(self, ra, dec, filter, radius):
         if self.source == 'simbad':
@@ -180,9 +228,14 @@ class Catalog():
                 kwargs[i] = self.__dict__[i]
             return from_vizier(center=SkyCoord(ra, dec,
                                                unit=(u.degree, u.degree)),
+                               id_key=self.id_key, ra_key=self.ra_key,
+                               dec_key=self.dec_key, flux_key=self.flux_key,
+                               flux_error_key=self.flux_error_key,
                                filter=filter, radius=radius, **kwargs)
         elif self.source == 'local':
-            raise NotImplementedError()
+            if self._table is None:
+                raise ValueError('Table not loaded!')
+            return self._table
         else:
             raise ValueError('Source not available. This should not happen!')
 
