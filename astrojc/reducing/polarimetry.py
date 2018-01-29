@@ -1,34 +1,39 @@
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy.optimize import curve_fit
+from collections import OrderedDict
 
 
-def _estimate_d(x):
+def estimate_dxdy(x, y, steps=[100, 30, 5, 3], bins=30):
+    """Estimate the x and y distance between the pairs of points"""
     dxa = []
+    dya = []
+
+    def _find_max(d, steps=[100, 30, 5, 3], bins=30):
+        dx = 0
+        for lim in (np.max(d), *steps):
+            histx = np.histogram(d, bins=bins, range=[dx-lim, dx+lim])
+            mx = np.argmax(histx[0])
+            dx = (histx[1][mx]+histx[1][mx+1])/2
+        return dx
+
     for i in range(len(x)):
         for j in range(len(x)):
             if x[i] < x[j]:
+                dya.append(y[i] - y[j])
                 dxa.append(x[i] - x[j])
 
-    dx = 0
-    for lim in (np.max(dxa), 100, 30, 5, 3):
-        histx = np.histogram(dxa, bins=30, range=[dx-lim, dx+lim])
-        mx = np.argmax(histx[0])
-        dx = (histx[1][mx]+histx[1][mx+1])/2
-
-    return dx
+    return (_find_max(dxa, steps=steps, bins=bins),
+            _find_max(dya, steps=steps, bins=bins))
 
 
-def estimate_dxdy(x, y):
-    return _estimate_d(x), _estimate_d(y)
-
-
-def match_pairs(positions, dx, dy, tolerance=1.0):
+def match_pairs(x, y, dx, dy, tolerance=1.0):
+    """Match the pairs of ordinary/extraordinary points (x, y)."""
     dt = np.dtype([('o', int), ('e', int)])
-    results = np.zeros(len(positions), dtype=dt)
+    results = np.zeros(len(x), dtype=dt)
     npairs = 0
 
-    p = np.copy(positions)
+    p = list(zip(x, y))
     kd = cKDTree(p)
 
     for i in range(len(p)):
@@ -37,8 +42,6 @@ def match_pairs(positions, dx, dy, tolerance=1.0):
         d, j = kd.query((px, py), k=1, eps=tolerance,
                         distance_upper_bound=tolerance, n_jobs=-1)
         if d <= tolerance:
-            p[i] = (np.nan, np.nan)
-            p[j] = (np.nan, np.nan)
             results[npairs]['o'] = i
             results[npairs]['e'] = j
             npairs = npairs+1
@@ -47,26 +50,54 @@ def match_pairs(positions, dx, dy, tolerance=1.0):
     return results[:npairs]
 
 
-def _quarter(psi, q, u, v):
-    'Z(I)= Q*cos(2psi(I))**2 + U*sin(2psi(I))*cos(2psi(I)) - V*sin(2psi(I))'
+def _quarter(psi, q, u, v, k):
+    '''Z= Q*cos(2psi)**2 + U*sin(2psi)*cos(2psi) - V*sin(2psi)'''
+    # I introduced a k constant for handle normalization in the fitting
     psi2 = 2*psi
-    return q*(np.cos(psi2)**2) + u*np.sin(psi)*np.cos(psi2) - v*np.sin(psi2)
+    z = q*(np.cos(psi2)**2) + u*np.sin(psi)*np.cos(psi2) - v*np.sin(psi2) + k
+    return z
 
 
-def _half(psi, q, u):
-    'Z(I)= Q*cos(4psi(I)) + U*sin(4psi(I))'
-    return q*np.cos(4*psi) + u*np.sin(4*psi)
+def _half(psi, q, u, k):
+    '''Z(I)= Q*cos(4psi(I)) + U*sin(4psi(I))'''
+    # I introduced a k constant for handle normalization in the fitting
+    return q*np.cos(4*psi) + u*np.sin(4*psi) + k
 
 
-def calculate_polarimetry_quater(fo, fe, psis):
-    z = (fe-fo)/(fe+fo)
-    return curve_fit(_quarter, psis, z)
+def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None):
+    """Calculate the polarimetry."""
+    if o_err is None or e_err is None:
+        do_th_error = False
+    else:
+        do_th_error = True
 
+    if retarder == 'half':
+        func = _half
+        args = ['q', 'u', 'k']
+    elif retarder == 'quarter':
+        func = _quarter
+        args = ['q', 'u', 'v', 'k']
+    else:
+        raise ValueError('retarder {} not supported.'.format(retarder))
 
-def calculate_polarimetry_half(fo, fe, psis):
-    k = 1
-    z = (fo - fe*k)/(fo + fe*k)
+    z = np.subtract(o, e)/np.sum(o, e)
+    result = OrderedDict()
+    errors = OrderedDict()
     try:
-        return curve_fit(_half, psis, z)
-    except:
-        return (np.nan, np.nan), [[np.nan, np.nan], [np.nan, np.nan]]
+        popt, pcov = curve_fit(func, psi, z)
+        for i in range(len(args)):
+            result[args[i]] = popt[i]
+            errors[args[i]] = np.sqrt(np.diag(pcov))[i]
+    except RuntimeError:
+        for i in args:
+            result[i] = np.nan
+            errors[i] = np.nan
+
+    if do_th_error:
+        raise NotImplementedError('Implement the theoretical error of'
+                                  ' polarimetry.')
+    else:
+        th_error = 0.0
+
+    # TODO: transform errors in sigma like pccdpack
+    return result, errors, th_error
