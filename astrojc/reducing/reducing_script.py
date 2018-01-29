@@ -3,11 +3,12 @@ from collections import OrderedDict
 import copy
 import six
 import re
+import os
 
 from astropy.io import fits  # , ascii
 # from astropy import units as u
 from astropy.table import Table, Column
-from astropy.time import Time
+# from astropy.time import Time
 from astropy.stats import gaussian_sigma_to_fwhm
 from astropy.wcs import WCS
 import numpy as np
@@ -29,12 +30,15 @@ except ModuleNotFoundError:
     logger.warn('SEP not found, ignoring it')
 
 from . import ccdproc_wrapper as ccdproc
+from .ccdproc_wrapper import check_ccddata as _check_ccddata
 from .image_shifts import ccddata_shift_images
 from .catalog_wrapper import (Catalog, solve_photometry_montecarlo,
                               solve_photometry_median,
                               solve_photometry_average)
 from .astrometry_wrapper import solve_astrometry_xy, wcs_xy2radec
 from .polarimetry import estimate_dxdy, match_pairs, calculate_polarimetry
+from . import pccdpack_wrapper as pccd
+from ..io.mkdir import mkdir_p
 
 # Important: this is the default keys of the configuration files!
 '''
@@ -71,6 +75,9 @@ gain                    # manual set of the gain of the image,
 save_calib_path         # path to save calibrated images
 
 #pipeline config
+raw_dir                 # directory containing raw data
+product_dir             # directory to store product data
+calib_dir               # directory to store calib data
 photometry_type         # aperture or psf or both
 psf_model               # model name of the psf: 'gaussian' or 'moffat'
 r                       # aperture radius or list of apertures (the best snr
@@ -113,22 +120,6 @@ def _multi_process(_func, iterator, *args, **kwargs):
     return [_func(i, *args, **kwargs) for i in iterator]
 
 
-def _check_ccddata(image):
-    """Check if a image is a CCDData. If not, try to convert it to CCDData."""
-    if not isinstance(image, ccdproc.CCDData):
-        if isinstance(image, six.string_types):
-            return ccdproc.read_fits(image)
-        elif isinstance(image, (fits.HDUList)):
-            return ccdproc.CCDData(image[0].data, meta=image[0].header)
-        elif isinstance(image, (fits.ImageHDU, fits.PrimaryHDU,
-                                fits.ComImageHDU)):
-            return ccdproc.CCDData(image.data, meta=image.header)
-        else:
-            raise ValueError('image type {} not supported'.format(type(image)))
-
-    return image
-
-
 def _check_iterable(value):
     """Check if a value is iterable (list), but not a string."""
     try:
@@ -143,11 +134,11 @@ def _check_iterable(value):
     return False
 
 
-def create_calib(sources, result_file, calib_type=None, master_bias=None,
+def create_calib(sources, result_file=None, calib_type=None, master_bias=None,
                  master_flat=None, dark_frame=None, badpixmask=None,
                  prebin=None, gain_key=None, rdnoise_key=None, gain=None,
                  combine_method='median', combine_sigma=None,
-                 exposure_key=None, mem_limit=_mem_limit):
+                 exposure_key=None, mem_limit=_mem_limit, calib_dir=None):
     """Create calibration frames."""
     s = _multi_process(_check_ccddata, sources)
 
@@ -159,6 +150,11 @@ def create_calib(sources, result_file, calib_type=None, master_bias=None,
                 f.header[key] = float(f.header[key])*binning
                 return f
             s = _multi_process(set_rdnoise, s, rdnoise_key, prebin)
+
+    if master_bias is not None:
+            master_bias = os.path.join(calib_dir, master_bias)
+    if master_flat is not None:
+            master_flat = os.path.join(calib_dir, master_flat)
 
     s = _multi_process(ccdproc.process_image, s, master_bias=master_bias,
                        master_flat=master_flat, gain=gain, gain_key=gain_key,
@@ -175,6 +171,9 @@ def create_calib(sources, result_file, calib_type=None, master_bias=None,
     else:
         scaling_func = None
 
+    if result_file is not None and calib_dir is not None:
+        result_file = os.path.join(calib_dir, result_file)
+
     res = ccdproc.combine(s, output_file=result_file,
                           method=combine_method, sigma_clip=sig_clip,
                           sigma_clip_low_thresh=combine_sigma,
@@ -182,19 +181,22 @@ def create_calib(sources, result_file, calib_type=None, master_bias=None,
                           mem_limit=mem_limit, scale=scaling_func)
 
     if badpixmask is not None and calib_type == 'flat':
-        badpix = np.logical_or(res.data <= 0.2, res.data >= 10).astype('int16')
+        badpix = np.logical_or(res.data <= 0.2, res.data >= 10).astype('uint8')
         badpix = ccdproc.CCDData(badpix, unit='')
+        if calib_dir is not None:
+            badpixmask = os.path.join(calib_dir, badpixmask)
         badpix.write(badpixmask)
 
     return res
 
 
-def _calib_image(image, output_file=None, master_bias=None, master_flat=None,
+def _calib_image(image, product_dir=None, master_bias=None, master_flat=None,
                  dark_frame=None, badpixmask=None, prebin=None, gain=None,
                  gain_key='GAIN', rdnoise_key='RDNOISE', exposure_key=None,
-                 save_calib_path=None):
+                 calib_dir=None):
     """Calib one single science image with calibration frames."""
     # TODO: save calibrated file. Problem: get the file name if image!=str
+    im = image
     image = _check_ccddata(image)
 
     if prebin is not None:
@@ -202,11 +204,18 @@ def _calib_image(image, output_file=None, master_bias=None, master_flat=None,
         if rdnoise_key is not None:
             image.header[rdnoise_key] = float(image.header[rdnoise_key])*prebin
 
+    master_bias = os.path.join(calib_dir, master_bias)
+    master_flat = os.path.join(calib_dir, master_flat)
+
     image = ccdproc.process_image(image, master_bias=master_bias,
                                   master_flat=master_flat, gain=gain,
                                   gain_key=gain_key, readnoise_key=rdnoise_key,
                                   exposure_key=exposure_key,
                                   badpixmask=badpixmask)
+
+    if product_dir is not None and isinstance(im, six.string_types):
+        base = os.path.basename(im)
+        image.write(os.path.join(product_dir, base))
 
     return image
 
@@ -220,7 +229,8 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
     s = _multi_process(_calib_image, sources, master_bias=master_bias,
                        master_flat=master_flat, dark_frame=dark_frame,
                        badpixmask=badpixmask, prebin=prebin, gain=gain,
-                       rdnoise_key=rdnoise_key, exposure_key=exposure_key)
+                       rdnoise_key=rdnoise_key, exposure_key=exposure_key,
+                       output_path=save_calib_path)
 
     if combine_method is not None:
         if combine_align_method is not None:
@@ -488,8 +498,10 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type=None,
     dx, dy = estimate_dxdy(tx, ty)
     pairs = match_pairs(tx, ty, dx, dy, tolerance=match_pairs_tolerance)
 
-    retarder_direction = -1 if retarder_direction == 'cw'
-    retarder_direction = 1 if retarder_direction == 'ccw'
+    if retarder_direction == 'cw':
+        retarder_direction = -1
+    if retarder_direction == 'ccw':
+        retarder_direction = 1
     pos = np.array(retarder_positions)*retarder_rotation*retarder_direction
 
     o_idx = pairs['o']
@@ -529,7 +541,7 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type=None,
         for i in range(len(pairs)):
             _process(tmp, ph, pos, pairs, i, None)
 
-    for i in table.colnames:
+    for i in ph.colnames:
         m = re.match('^flux_r\d+[\.\d]+$', i)
         if m:
             for j in range(len(pairs)):
@@ -577,8 +589,8 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
                                  retarder_rotation=retarder_rotation)
             try:
                 ast = Table()
-                ast['x'] = tx[o_idx]
-                ast['y'] = tx[o_idx]
+                ast['x'] = ap['xo']
+                ast['y'] = ap['yo']
                 for i in ap.colnames:
                     if 'flux' in i:
                         ast[i] = ap[i]
@@ -593,8 +605,10 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
 
     return result
 
+
 class ReduceScript():
     """Simple class to process pipeline scripts qith configuration files."""
+    # TODO: introduce parameters checking
     def __init__(self, config=None):
         """Dummy entry for the class"""
         self._default_kwargss = OrderedDict()
@@ -620,17 +634,78 @@ class ReduceScript():
         If the configuration shares a variable with detaful values, it will be
         overrided."""
         prod_file = json.load(open(filename, 'r'))
-        for i, v in prod_file.items():
-            prod = copy.copy(self._default_kwargss)
-            prod.update(v)
-            try:
-                self.run(**prod)
-            except Exception as e:
-                logger.warn('Problem in the process of {} product from'
-                            ' {} file. Passing it.'.format(i, filename))
+        default = copy.copy(self._default_kwargss)
+        if '__preload__' in prod_file.keys():
+            default.update(prod_file.pop('__preload__'))
 
-    def run(self, **config):
+        if dataset not in ['all', None]:
+            valid = dataset
+        else:
+            valid = prod_file.keys()
+        for i, v in prod_file.items():
+            if i in valid:
+                prod = copy.copy(default)
+                prod.update(v)
+                try:
+                    self.run(i, **prod)
+                except Exception as e:
+                    logger.warn('Problem in the process of {} product from'
+                                ' {} file. Passing it.'.format(i, filename))
+
+    def run(self, name, **config):
         """Run a single product. Config is the dictionary of needed
         parameters."""
         raise NotImplementedError('This pipeline is not a valid implemented'
                                   ' pipeline!')
+
+    def __call__(self, name, **config):
+        return self.run(name, **config)
+
+
+class CalibScript(ReduceScript):
+    def __init__(self, config=None):
+        super(CalibScript, self).__init__(config=config)
+
+    def run(self, name, **config):
+        logger.debug("Product {} config:{}".format(name, str(config)))
+        s = [os.path.join(config['raw_dir'], i) for i in config['sources']]
+
+        calib_kwargs = {}
+        for i in ['calib_type', 'master_bias', 'master_flat', 'dark_frame',
+                  'badpixmask', 'prebin', 'gain_key', 'rdnoise_key', 'gain',
+                  'combine_method', 'combine_sigma', 'exposure_key',
+                  'mem_limit', 'calib_dir']:
+            if i in config.keys():
+                calib_kwargs[i] = config[i]
+
+        if 'result_file' not in config.keys():
+            outname = name
+        else:
+            outname = config['result_file']
+
+        mkdir_p(config['calib_dir'])
+        logger.debug("kwargs for create_calib are:{}".format(calib_kwargs))
+        logger.debug("Source files: {}".format(s))
+        logger.debug("Ourput file: {}".format(outname))
+        return create_calib(s, outname, **calib_kwargs)
+
+
+class PhotometryScript(ReduceScript):
+    def __init__(self, config=None):
+        super(PhotometryScript, self).__init__(config=config)
+
+    def run(self, name, **config):
+        """Run this pipeline script"""
+        product_dir = config['product_dir']
+        s = [os.path.join(config['raw_dir'], i) for i in config['sources']]
+
+        calib_kwargs = {}
+        for i in ('master_bias', 'master_flat', 'dark_frame', 'badpixmask',
+                  'prebin', 'gain_key', 'gain', 'rdnoise_key',
+                  'combine_method', 'combine_sigma', 'exposure_key',
+                  'mem_limit', 'save_calib_path', 'combine_align_method'):
+            calib_kwargs[i] = config[i]
+
+        ccds = calib_science(s, **calib_kwargs)
+        print(ccds)
+        # TODO: finish this script

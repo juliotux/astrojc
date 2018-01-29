@@ -11,10 +11,11 @@ from ..logging import log as logger
 try:
     from numba import vectorize
     target = 'parallel'
-    logger.info('Numba found, using parallel Moffat kernel.')
+    logger.debug('Numba found, using parallel Moffat kernel.')
 except ModuleNotFoundError:
     # Handle numba not installed
     import inspect
+
     def vectorize(arg, target):
         def decorator(func):
             sign = inspect.signature(func)

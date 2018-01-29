@@ -10,13 +10,14 @@ import numpy as np
 from scipy.spatial.ckdtree import cKDTree
 import json
 import os
+import six
 
 from .astrometry_wrapper import wcs_xy2radec as xy2radec
-from ..logging import log
+from ..logging import log as logger
 from ..config import get_config_file
 
 
-__all__ = ['Catalog', 'from_simbad', 'from_vizier', 'from_table',
+__all__ = ['Catalog', 'from_simbad', 'from_vizier', 'from_ascii',
            'solve_photometry_montecarlo', 'solve_photometry_median',
            'solve_photometry_average']
 
@@ -82,7 +83,7 @@ def from_vizier(table, center, radius, id_key='ID', ra_key='RAJ2000',
 def from_ascii(filename, id_key=None, ra_key=None, dec_key=None, flux_key=None,
                flux_error_key=None, prepend_id_key=False, **readkwargs):
     """Load from a ascii local catalog, with named columns."""
-    t = asci.read(filename, **asciikwargs)
+    t = asci.read(filename, **readkwargs)
     id = t[id_key]
     ra = t[ra_key]
     dec = t[dec_key]
@@ -204,14 +205,15 @@ class Catalog():
         new = Catalog({'souce': 'local', 'file_name': filename,
                        'ra_key': ra_key, 'dec_key': dec_key,
                        'flux_key': flux_key, 'flux_error_key': flux_error_key,
-                       'flux_unit': flux_unit})
+                       'flux_unit': flux_unit, '_readkwargs': readkwargs})
+        return new
 
-    def _load_table(self):
+    def _load_table(self, filename):
         self._table = from_ascii(filename, id_key=self.id_key,
                                  ra_key=self.ra_key, dec_key=self.dec_key,
                                  flux_key=self.flux_key,
                                  flux_error_key=self.flux_error_key,
-                                 **readkwargs)
+                                 **self._readkwargs)
 
     def _query(self, ra, dec, filter, radius):
         if self.source == 'simbad':
@@ -283,7 +285,7 @@ class PhotometrySolver():
         ~/config/.astrojc/photometry_catalogs.json, or a Catalog object."""
         if isinstance(catalog, Catalog):
             self._catalog = catalog
-        elif isinstance(catalog, string):
+        elif isinstance(catalog, six.string_types):
             try:
                 if catalog_config_file is not None:
                     f = get_config_file('photometry_catalogs.json')
@@ -302,7 +304,7 @@ class PhotometrySolver():
         self._operator = None
         self._inverse_operator = None
 
-    def _to_cat_scale(self, data, data_error, data_scale):
+    def _to_cat_scale(self, data, data_error, data_unit):
         """Transform the user data to the same unit of catalog data."""
         target = self._catalog.flux_unit
         if target == 'mag':
@@ -312,7 +314,7 @@ class PhotometrySolver():
                 if data_error is None:
                     err = None
                 else:
-                    err = 10.086*np.divide(flux_error, flux)
+                    err = 10.086*np.divide(data_error, data)
                 return -2.5*np.log10(data), err
             elif data_unit in ['log']:
                 if data_error is None:
@@ -329,7 +331,7 @@ class PhotometrySolver():
                 if data_error is None:
                     err = None
                 else:
-                    err = 0.4342*np.divide(flux_error, flux)
+                    err = 0.4342*np.divide(data_error, data)
                 return np.log10(data), err
             elif data_unit in ['log10', 'log']:
                 return data, data_error
@@ -337,7 +339,7 @@ class PhotometrySolver():
                 if data_error is None:
                     err = None
                 else:
-                    err = np.divide(flux_error, 2.5)
+                    err = np.divide(data_error, 2.5)
                 return np.divide(data, -2.5), err
         elif target == 'linear':
             self._operator = lambda x, y: x / y
@@ -365,7 +367,7 @@ class PhotometrySolver():
 
     def solve_montecarlo(fluxes, flux_error, references, limits=(5, 18),
                          n_iter=100, n_stars=0.2):
-        """Solve the photometry of a dataset by montecarlo comparision.""""
+        """Solve the photometry of a dataset by montecarlo comparision."""
 
 
 def solve_photometry_median(fluxes, flux_error, references, limits=(5, 18)):
@@ -373,7 +375,7 @@ def solve_photometry_median(fluxes, flux_error, references, limits=(5, 18)):
 
     a, b = limits
     a, b = a, b if a < b else b, a
-    args = np.where(np.logical_and(references>=a, references<=b))
+    args = np.where(np.logical_and(references >= a, references <= b))
 
     diff = references - mags
     dif = np.nanmedian(diff[args])
@@ -388,7 +390,7 @@ def solve_photometry_average(fluxes, flux_error, references, limits=(5, 18)):
 
     a, b = limits
     a, b = a, b if a < b else b, a
-    args = np.where(np.logical_and(references>=a, references<=b))
+    args = np.where(np.logical_and(references >= a, references <= b))
 
     diff = references - mags
     dif = np.nanaverage(diff[args], weights=np.divide(1, flux_error[args]))

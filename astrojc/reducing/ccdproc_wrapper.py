@@ -1,5 +1,5 @@
 '''Wrapper from ccdproc package.'''
-
+import six
 import ccdproc
 from ccdproc.combiner import combine
 from ccdproc import CCDData
@@ -30,6 +30,22 @@ _ccd_procces_keys = ['oscan', 'trim', 'error', 'master_bias', 'dark_frame',
                      'add_keyword']
 
 
+def check_ccddata(image):
+    """Check if a image is a CCDData. If not, try to convert it to CCDData."""
+    if not isinstance(image, ccdproc.CCDData):
+        if isinstance(image, six.string_types):
+            return read_fits(image)
+        elif isinstance(image, (fits.HDUList)):
+            return CCDData(image[0].data, meta=image[0].header)
+        elif isinstance(image, (fits.ImageHDU, fits.PrimaryHDU,
+                                fits.ComImageHDU)):
+            return CCDData(image.data, meta=image.header)
+        else:
+            raise ValueError('image type {} not supported'.format(type(image)))
+
+    return image
+
+
 def process_image(ccd, gain_key=None, readnoise_key=None,
                   *args, **kwargs):
     nkwargs = {}
@@ -54,6 +70,13 @@ def process_image(ccd, gain_key=None, readnoise_key=None,
             nkwargs['readnoise'] = float(ccd.header[readnoise_key])*u.electron
         else:
             nkwargs['readnoise'] = float(fits.getval(gain_key))*u.electron
+
+    if kwargs.get('master_bias', None):
+        kwargs['master_bias'] = check_ccddata(kwargs['master_bias'])
+    if kwargs.get('master_flat', None):
+        kwargs['master_flat'] = check_ccddata(kwargs['master_flat'])
+    if kwargs.get('dark_frame', None):
+        kwargs['dark_frame'] = check_ccddata(kwargs['dark_frame'])
 
     return ccdproc.ccd_process(ccd, *args, **nkwargs)
 
