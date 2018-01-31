@@ -7,6 +7,8 @@ import numpy as np
 from astropy import units as u
 from astropy.io import fits
 
+from ..logging import log as logger
+
 mem_limit = 1e8
 
 
@@ -38,7 +40,7 @@ def check_ccddata(image):
         elif isinstance(image, (fits.HDUList)):
             return CCDData(image[0].data, meta=image[0].header)
         elif isinstance(image, (fits.ImageHDU, fits.PrimaryHDU,
-                                fits.ComImageHDU)):
+                                fits.CompImageHDU)):
             return CCDData(image.data, meta=image.header)
         else:
             raise ValueError('image type {} not supported'.format(type(image)))
@@ -48,22 +50,18 @@ def check_ccddata(image):
 
 def process_image(ccd, gain_key=None, readnoise_key=None,
                   *args, **kwargs):
+    ccd = check_ccddata(ccd)
     nkwargs = {}
     for i in kwargs.keys():
         if i in _ccd_procces_keys:
             nkwargs[i] = kwargs.get(i)
 
-    for i in ['master_bias', 'master_flat', 'dark_frame']:
-        if i in nkwargs.keys() and \
-           not isinstance(nkwargs[i], CCDData) and \
-           nkwargs[i] is not None:
-            nkwargs[i] = read_fits(nkwargs[i])
+    for i in ['master_bias', 'master_flat', 'dark_frame', 'badpixmask']:
+        if nkwargs.get(i, None):
+            nkwargs[i] = check_ccddata(nkwargs[i])
 
     if gain_key is not None:
-        if isinstance(ccd, ccdproc.CCDData):
-            nkwargs['gain'] = float(ccd.header[gain_key])*u.electron/u.adu
-        else:
-            nkwargs['gain'] = float(fits.getval(gain_key))*u.electron/u.adu
+        nkwargs['gain'] = float(ccd.header[gain_key])*u.electron/u.adu
 
     if readnoise_key is not None:
         if isinstance(ccd, ccdproc.CCDData):
@@ -77,21 +75,14 @@ def process_image(ccd, gain_key=None, readnoise_key=None,
         kwargs['master_flat'] = check_ccddata(kwargs['master_flat'])
     if kwargs.get('dark_frame', None):
         kwargs['dark_frame'] = check_ccddata(kwargs['dark_frame'])
+    if kwargs.get('badpixmask', None):
+        kwargs['badpixmask'] = check_ccddata(kwargs['badpixmask'])
 
-    return ccdproc.ccd_process(ccd, *args, **nkwargs)
+    # logger.debug('ccdproc kwargs:{}'.format(nkwargs))
 
+    ccd = ccdproc.ccd_process(ccd, *args, **nkwargs)
 
-def combine_bias(ccd_list, combine_method='median', mem_limit=mem_limit,
-                 **reductwargs):
-    for i in range(len(ccd_list)):
-        ccd_list[i] = process_image(ccd_list[i], **reductwargs)
-    return combine(ccd_list, method=combine_method, mem_limit=mem_limit)
+    if gain_key is not None:
+        ccd.meta[gain_key] = 1.0
 
-
-def combine_flat(ccd_list, master_bias, combine_method='median',
-                 mem_limit=mem_limit, **reductwargs):
-    for i in range(len(ccd_list)):
-        ccd_list[i] = process_image(ccd_list[i], master_bias=master_bias,
-                                    **reductwargs)
-        ccd_list[i].data = ccd_list[i].data/np.median(ccd_list[i].data)
-    return combine(ccd_list, method=combine_method, mem_limit=mem_limit)
+    return ccd

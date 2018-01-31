@@ -15,11 +15,19 @@ import six
 from .astrometry_wrapper import wcs_xy2radec as xy2radec
 from ..logging import log as logger
 from ..config import get_config_file
+from ..py_utils import batch_key_replace
 
 
 __all__ = ['Catalog', 'from_simbad', 'from_vizier', 'from_ascii',
            'solve_photometry_montecarlo', 'solve_photometry_median',
            'solve_photometry_average']
+
+
+def _filter_replace(flux_key, flux_error_key, filter):
+    d = {'flux_key': flux_key, 'flux_error_key': flux_error_key,
+         'filter': filter}
+    batch_key_replace(d)
+    return d['flux_key'], d['flux_error_key']
 
 
 def from_simbad(center, radius, filter):
@@ -44,18 +52,22 @@ def from_simbad(center, radius, filter):
                                   ['S32']+['f8']*4))))
 
 
-def from_vizier(table, center, radius, id_key='ID', ra_key='RAJ2000',
+def from_vizier(table, center, radius, filter, id_key='ID', ra_key='RAJ2000',
                 dec_key='DEJ2000', flux_key='FLUX',
-                flux_error_key=None, prepend_id_key=True):
+                flux_error_key=None, prepend_id_key=True, **ignoredargs):
+    # TODO: implement the case for multiple tables
     v = Vizier()
     v.ROW_LIMIT = -1
 
+    flux_key, flux_error_key = _filter_replace(flux_key, flux_error_key,
+                                               filter)
+
     query = v.query_region(center, radius=Angle(radius), catalog=table)[0]
 
-    id = query[id_key].data.astype('S32')
+    id = query[id_key].data
     if prepend_id_key:
-        for i in range(len(id)):
-            id[i] = "{id_key} {id}".format(id_key=id_key, id=id[i])
+        id = ["{id_key} {id}".format(id_key=id_key, id=i) for i in id]
+        id = np.array(id)
 
     # FIXME: we assume, at now, that the units are hexa
     coords = SkyCoord(query[ra_key], query[dec_key],
@@ -63,13 +75,13 @@ def from_vizier(table, center, radius, id_key='ID', ra_key='RAJ2000',
 
     try:
         flux = query[flux_key].data
-    except NameError:
+    except Exception as e:
         flux = np.array([np.nan]*len(id))
 
     if flux_error_key is not None:
         try:
             flux_error = query[flux_error_key].data
-        except NameError:
+        except Exception as e:
             flux_error = np.array([np.nan]*len(id))
 
     ra, dec = coords.ra.degree, coords.dec.degree
@@ -80,22 +92,34 @@ def from_vizier(table, center, radius, id_key='ID', ra_key='RAJ2000',
                                   ['S32']+['f8']*4))))
 
 
-def from_ascii(filename, id_key=None, ra_key=None, dec_key=None, flux_key=None,
-               flux_error_key=None, prepend_id_key=False, **readkwargs):
+def from_ascii(filename, filter=None, id_key=None, ra_key=None, dec_key=None,
+               flux_key=None, flux_error_key=None, prepend_id_key=False,
+               **readkwargs):
     """Load from a ascii local catalog, with named columns."""
     t = asci.read(filename, **readkwargs)
-    id = t[id_key]
-    ra = t[ra_key]
-    dec = t[dec_key]
+    id = t[id_key].data
+    ra = t[ra_key].data
+    dec = t[dec_key].data
+
+    try:
+        ra = np.array([float(i) for i in ra])
+        dec = np.array([float(i) for i in dec])
+    except ValueError:
+        coords = SkyCoord(ra, dec, unit=(u.hourangle, u.degree))
+        ra = coords.ra.degree
+        dec = coords.dec.degree
+
+    flux_key, flux_error_key = _filter_replace(flux_key, flux_error_key,
+                                               filter)
 
     try:
         flux = t[flux_key]
-    except KeyError:
+    except Exception as e:
         flux = [np.nan]*len(t)
 
     try:
         flux_error = t[flux_error_key]
-    except KeyError:
+    except Exception as e:
         flux_error = [np.nan]*len(t)
 
     if prepend_id_key:
@@ -109,11 +133,12 @@ def from_ascii(filename, id_key=None, ra_key=None, dec_key=None, flux_key=None,
 
 class Catalog():
     _mandatory = ['filters', 'prepend_id_key', 'id_key', 'ra_key',
-                  'dec_key', 'flux_key', 'flux_unit']
+                  'dec_key', 'flux_key', 'flux_unit', 'source']
     _vizier_mandatory = ['vizier_table']
     _simbad_mandatory = []
     _local_mandatory = ['file_name']
-    _optional_keys = ['flux_error_key', 'comment', 'ads_ref_string']
+    _optional_keys = ['flux_error_key', 'comment', 'ads_ref_string',
+                      '_readkwargs']
     """Container for store the definitions of a catalog and related routines"""
     def __init__(self, definitions):
         """
@@ -161,6 +186,7 @@ class Catalog():
                                  " definitions.".format(key))
 
         self._table = None
+        self._defdict = {}
 
         _check_key('source', definitions.keys())
 
@@ -184,13 +210,20 @@ class Catalog():
             raise ValueError("source {} not supported.".format(source))
 
         for i, v in definitions.items():
-            if i in list(self._mandatory + self._simbad_mandatory +
-                         self._vizier_mandatory + self._local_mandatory +
-                         self._optional_keys):
-                self.__setattr__(i, v)
+            self._defdict[i] = v
 
-        if self.souce == 'local':
+        batch_key_replace(self._defdict)
+
+        if self['source'] == 'local':
             self._load_table()
+
+    def __getitem__(self, key):
+        if key not in self._defdict.keys():
+            raise KeyError(key)
+        return self._defdict[key]
+
+    def __setitem__(self, key, value):
+        self._defdict[key] = value
 
     @staticmethod
     def load_from_json(filename, key=None):
@@ -201,40 +234,46 @@ class Catalog():
 
     @staticmethod
     def load_from_ascii(filename, id_key, ra_key, dec_key, flux_key,
-                        flux_error_key, flux_unit, **readkwargs):
-        new = Catalog({'souce': 'local', 'file_name': filename,
-                       'ra_key': ra_key, 'dec_key': dec_key,
+                        flux_error_key, flux_unit, filters, prepend_id_key,
+                        **readkwargs):
+        new = Catalog({'source': 'local', 'file_name': filename,
+                       'id_key': id_key, 'ra_key': ra_key, 'dec_key': dec_key,
                        'flux_key': flux_key, 'flux_error_key': flux_error_key,
-                       'flux_unit': flux_unit, '_readkwargs': readkwargs})
+                       'flux_unit': flux_unit, 'filters': filters,
+                       'prepend_id_key': prepend_id_key,
+                       '_readkwargs': readkwargs})
         return new
 
-    def _load_table(self, filename):
-        self._table = from_ascii(filename, id_key=self.id_key,
-                                 ra_key=self.ra_key, dec_key=self.dec_key,
-                                 flux_key=self.flux_key,
-                                 flux_error_key=self.flux_error_key,
-                                 **self._readkwargs)
+    def _load_table(self):
+        self._table = from_ascii(self['file_name'], id_key=self['id_key'],
+                                 ra_key=self['ra_key'],
+                                 dec_key=self['dec_key'],
+                                 flux_key=self['flux_key'],
+                                 flux_error_key=self['flux_error_key'],
+                                 **self['_readkwargs'])
 
     def _query(self, ra, dec, filter, radius):
-        if self.source == 'simbad':
+        if self['source'] == 'simbad':
             return from_simbad(center=SkyCoord(ra, dec,
                                                unit=(u.degree, u.degree)),
                                filter=filter, radius=radius)
         else:
-            if filter not in self.filters:
-                raise ValueError('Filter {} is not available.'.format(filter))
+            if self['filters'] is not None:
+                if filter not in self['filters']:
+                    raise ValueError('Filter {} is not available.'
+                                     .format(filter))
 
-        if self.source == 'vizier':
-            kwargs = dict()
-            for i in self._mandatory - ['filters', 'flux_unit']:
-                kwargs[i] = self.__dict__[i]
+        if self['source'] == 'vizier':
             return from_vizier(center=SkyCoord(ra, dec,
                                                unit=(u.degree, u.degree)),
-                               id_key=self.id_key, ra_key=self.ra_key,
-                               dec_key=self.dec_key, flux_key=self.flux_key,
-                               flux_error_key=self.flux_error_key,
-                               filter=filter, radius=radius, **kwargs)
-        elif self.source == 'local':
+                               id_key=self['id_key'], ra_key=self['ra_key'],
+                               dec_key=self['dec_key'],
+                               flux_key=self['flux_key'],
+                               flux_error_key=self['flux_error_key'],
+                               filter=filter, radius=radius,
+                               prepend_id_key=self['prepend_id_key'],
+                               table=self['vizier_table'])
+        elif self['source'] == 'local':
             if self._table is None:
                 raise ValueError('Table not loaded!')
             return self._table
@@ -249,8 +288,8 @@ class Catalog():
         """
         center_ra = (np.max(ra) + np.min(ra))/2
         center_dec = (np.max(dec) + np.min(dec))/2
-        radius = np.max(np.max(ra) - np.min(ra),
-                        np.max(dec) - np.min(dec))*u.degree
+        radius = np.max([np.max(ra) - np.min(ra),
+                         np.max(dec) - np.min(dec)])*u.degree
 
         cat = self._query(center_ra, center_dec, filter, radius)
 

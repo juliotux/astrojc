@@ -7,8 +7,8 @@
             "id_key" : "UCAC4",
             "ra_key" : "RAJ2000",
             "dec_key" : "DEJ2000",
-            "flux_key" : "{%f}mag",
-            "flux_error_key" : "e_{%f}mag",
+            "flux_key" : "{filter}mag",
+            "flux_error_key" : "e_{filter}mag",
             "flux_unit" : "mag",
             "ads_ref_string" : "2013AJ....145...44Z",
             "comment" : "Magnitudes from APASS"
@@ -21,8 +21,8 @@
             "id_key" : -1,
             "ra_key" : "RAJ2000",
             "dec_key" : "DEJ2000",
-            "flux_key" : "{%f}mag",
-            "flux_error_key" : "e_{%f}mag",
+            "flux_key" : "{filter}mag",
+            "flux_error_key" : "e_{filter}mag",
             "flux_unit" : "mag",
             "ads_ref_string" : "2016yCat.2336....0H",
             "comment" : "g', r' and i' magnitudes in AB system"
@@ -35,8 +35,8 @@
             "id_key" : "DENIS",
             "ra_key" : "RAJ2000",
             "dec_key" : "DEJ2000",
-            "flux_key" : "{%f}mag",
-            "flux_error_key" : "e_{%f}mag",
+            "flux_key" : "{filter}mag",
+            "flux_error_key" : "e_{filter}mag",
             "flux_unit" : "mag",
             "ads_ref_string" : "2005yCat.2263....0T",
             "comment" : "Id, Jd, Kd may differ a bit from 2MASS catalog"
@@ -49,8 +49,8 @@
             "id_key" : "Name",
             "ra_key" : "RAJ2000",
             "dec_key" : "DEJ2000",
-            "flux_key" : "{%f}mag",
-            "flux_error_key" : "e_{%f}mag",
+            "flux_key" : "{filter}mag",
+            "flux_error_key" : "e_{filter}mag",
             "flux_unit" : "mag",
             "ads_ref_string" : "2010AJ....140..416B",
             "comment" : "J, H and K mags from 2MASS"
@@ -64,8 +64,8 @@
             "id_key" : "_2MASS",
             "ra_key" : "RAJ2000",
             "dec_key" : "DEJ2000",
-            "flux_key" : "{%f}mag",
-            "flux_error_key" : "e_{%f}mag",
+            "flux_key" : "{filter}mag",
+            "flux_error_key" : "e_{filter}mag",
             "flux_unit" : "mag",
             "ads_ref_string" : "2003yCat.2246....0C",
             "comment" : ""
@@ -77,10 +77,10 @@
             "id_key" : "MAIN_ID",
             "ra_key" : "RA",
             "dec_key" : "DEC",
-            "flux_key" : "FLUX_{%f}",
-            "flux_error_key" : "FLUX_ERROR_{%f}",
-            "flux_unit_key" : "FLUX_UNIT_{%f}",
-            "ads_ref_string_key" : "FLUX_BIBCODE_V",
+            "flux_key" : "FLUX_{filter}",
+            "flux_error_key" : "FLUX_ERROR_{filter}",
+            "flux_unit_key" : "FLUX_UNIT_{filter}",
+            "ads_ref_string_key" : "FLUX_BIBCODE_{filter}",
             "comment" : "flux values from different sources"
         }
 }

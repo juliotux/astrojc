@@ -2,7 +2,6 @@
 
 import os
 import sys
-sys.path.append('./build/lib/')
 
 from qtpy import QtCore, QtWidgets
 from astrojc.gui.qt_2dimage_plotter import HDUFigureCanvas2D

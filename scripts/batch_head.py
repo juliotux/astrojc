@@ -1,3 +1,5 @@
+#!/bin/env python
+
 try:
     from qtpy.QtCore import Qt
     from qtpy.QtWidgets import (QApplication, QComboBox, QDialog, QGridLayout,

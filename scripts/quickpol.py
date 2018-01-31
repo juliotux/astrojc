@@ -1,6 +1,7 @@
+#!/bin/env python3
+
 import os
 import sys
-sys.path.append('build/lib/')
 
 import matplotlib
 matplotlib.use('Qt5Agg')

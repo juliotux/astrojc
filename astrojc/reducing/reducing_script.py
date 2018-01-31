@@ -4,6 +4,7 @@ import copy
 import six
 import re
 import os
+import glob
 
 from astropy.io import fits  # , ascii
 # from astropy import units as u
@@ -39,6 +40,7 @@ from .astrometry_wrapper import solve_astrometry_xy, wcs_xy2radec
 from .polarimetry import estimate_dxdy, match_pairs, calculate_polarimetry
 from . import pccdpack_wrapper as pccd
 from ..io.mkdir import mkdir_p
+from ..py_utils import process_list, batch_key_replace, check_iterable
 
 # Important: this is the default keys of the configuration files!
 '''
@@ -63,7 +65,9 @@ pipeline                # pipeline name: 'photometry', 'lightcurve',
                         # 'polarimetry', 'calib'
 calib_type              # 'flat', 'bias', 'dark', 'science'
 result_file             # file to store the results
+save_calib_path         # alternative folder to save calibrated images
 sources                 # source files to process
+source_ls_pattern       # filename pattern to load sources from ls
 prebin                  # number of pixels to bin
 filter                  # filter of the image
 master_bias             # bias file to correct the image
@@ -72,7 +76,6 @@ badpixmask              # bad pixel mas file. pipeline=calib will created it
 plate_scale             # the plate scale of the final image
 gain                    # manual set of the gain of the image,
                         # if gain_key is not set
-save_calib_path         # path to save calibrated images
 
 #pipeline config
 raw_dir                 # directory containing raw data
@@ -109,56 +112,40 @@ combine_method          # method for combine images. Can be 'median', 'average'
 combine_sigma           # sigma of sigma_clip when combining images
 combine_align_method    # if calculate and apply shift in combine: 'fft', 'wcs'
 mem_limit               # maximum memory limit
+
+# In the values, {key_name} will be formated to the key_name value
 '''
 
 
 _mem_limit = 1e7
 
 
-def _multi_process(_func, iterator, *args, **kwargs):
-    """Run a function func for all i in a iterator list."""
-    return [_func(i, *args, **kwargs) for i in iterator]
-
-
-def _check_iterable(value):
-    """Check if a value is iterable (list), but not a string."""
-    try:
-        iter(value)
-        if not isinstance(value, six.string_types):
-            return True
-        else:
-            return False
-    except Exception as e:
-        pass
-
-    return False
-
-
 def create_calib(sources, result_file=None, calib_type=None, master_bias=None,
                  master_flat=None, dark_frame=None, badpixmask=None,
                  prebin=None, gain_key=None, rdnoise_key=None, gain=None,
                  combine_method='median', combine_sigma=None,
+                 combine_align_method=None,
                  exposure_key=None, mem_limit=_mem_limit, calib_dir=None):
     """Create calibration frames."""
-    s = _multi_process(_check_ccddata, sources)
+    s = process_list(_check_ccddata, sources)
 
     if prebin is not None:
-        s = _multi_process(ccdproc.ccdproc.block_reduce, s, prebin,
-                           func=np.sum)
+        s = process_list(ccdproc.ccdproc.block_reduce, s, prebin,
+                         func=np.sum)
         if rdnoise_key is not None:
             def set_rdnoise(f, key, binning):
                 f.header[key] = float(f.header[key])*binning
                 return f
-            s = _multi_process(set_rdnoise, s, rdnoise_key, prebin)
+            s = process_list(set_rdnoise, s, rdnoise_key, prebin)
 
     if master_bias is not None:
             master_bias = os.path.join(calib_dir, master_bias)
     if master_flat is not None:
             master_flat = os.path.join(calib_dir, master_flat)
 
-    s = _multi_process(ccdproc.process_image, s, master_bias=master_bias,
-                       master_flat=master_flat, gain=gain, gain_key=gain_key,
-                       readnoise_key=rdnoise_key, exposure_key=exposure_key)
+    s = process_list(ccdproc.process_image, s, master_bias=master_bias,
+                     master_flat=master_flat, gain=gain, gain_key=gain_key,
+                     readnoise_key=rdnoise_key, exposure_key=exposure_key)
 
     if combine_sigma is not None:
         sig_clip = True
@@ -173,6 +160,9 @@ def create_calib(sources, result_file=None, calib_type=None, master_bias=None,
 
     if result_file is not None and calib_dir is not None:
         result_file = os.path.join(calib_dir, result_file)
+
+    if combine_align_method in ['fft', 'wcs']:
+        s = ccddata_shift_images(s, combine_align_method)
 
     res = ccdproc.combine(s, output_file=result_file,
                           method=combine_method, sigma_clip=sig_clip,
@@ -193,7 +183,7 @@ def create_calib(sources, result_file=None, calib_type=None, master_bias=None,
 def _calib_image(image, product_dir=None, master_bias=None, master_flat=None,
                  dark_frame=None, badpixmask=None, prebin=None, gain=None,
                  gain_key='GAIN', rdnoise_key='RDNOISE', exposure_key=None,
-                 calib_dir=None):
+                 calib_dir=None, save_calib_path=None):
     """Calib one single science image with calibration frames."""
     # TODO: save calibrated file. Problem: get the file name if image!=str
     im = image
@@ -204,8 +194,14 @@ def _calib_image(image, product_dir=None, master_bias=None, master_flat=None,
         if rdnoise_key is not None:
             image.header[rdnoise_key] = float(image.header[rdnoise_key])*prebin
 
-    master_bias = os.path.join(calib_dir, master_bias)
-    master_flat = os.path.join(calib_dir, master_flat)
+    if master_bias:
+        master_bias = os.path.join(calib_dir, master_bias)
+    if master_flat:
+        master_flat = os.path.join(calib_dir, master_flat)
+    if dark_frame:
+        dark_frame = os.path.join(calib_dir, dark_frame)
+    if badpixmask:
+        badpixmask = os.path.join(calib_dir, badpixmask)
 
     image = ccdproc.process_image(image, master_bias=master_bias,
                                   master_flat=master_flat, gain=gain,
@@ -213,9 +209,10 @@ def _calib_image(image, product_dir=None, master_bias=None, master_flat=None,
                                   exposure_key=exposure_key,
                                   badpixmask=badpixmask)
 
-    if product_dir is not None and isinstance(im, six.string_types):
+    if save_calib_path is not None and isinstance(im, six.string_types):
         base = os.path.basename(im)
-        image.write(os.path.join(product_dir, base))
+        mkdir_p(save_calib_path)
+        image.write(os.path.join(save_calib_path, base))
 
     return image
 
@@ -224,19 +221,28 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
                   badpixmask=None, prebin=None, gain_key='GAIN', gain=None,
                   rdnoise_key='RDNOISE', combine_method=None,
                   combine_sigma=None, exposure_key=None, mem_limit=_mem_limit,
-                  save_calib_path=None, combine_align_method=None):
+                  product_dir=None, combine_align_method=None, calib_dir=None,
+                  save_calib_path=None, remove_cosmics=True):
     """Calib science images with gain, flat, bias and binning."""
-    s = _multi_process(_calib_image, sources, master_bias=master_bias,
-                       master_flat=master_flat, dark_frame=dark_frame,
-                       badpixmask=badpixmask, prebin=prebin, gain=gain,
-                       rdnoise_key=rdnoise_key, exposure_key=exposure_key,
-                       output_path=save_calib_path)
+    s = process_list(_calib_image, sources, master_bias=master_bias,
+                     master_flat=master_flat, dark_frame=dark_frame,
+                     badpixmask=badpixmask, prebin=prebin, gain=gain,
+                     rdnoise_key=rdnoise_key, exposure_key=exposure_key,
+                     save_calib_path=save_calib_path, calib_dir=calib_dir)
+
+    if combine_align_method in ['fft', 'wcs']:
+        s = ccddata_shift_images(s, method=combine_align_method)
+
+    if remove_cosmics:
+        s = process_list(ccdproc.ccdproc.cosmicray_lacosmic, s)
 
     if combine_method is not None:
         if combine_align_method is not None:
             s = ccddata_shift_images(s, combine_align_method)
         if combine_sigma is not None:
             sig_clip = True
+        else:
+            sig_clip = False
         s = ccdproc.combine(s, method=combine_method, sigma_clip=sig_clip,
                             sigma_clip_low_thresh=combine_sigma,
                             sigma_clip_high_thresh=combine_sigma,
@@ -263,7 +269,7 @@ def _do_aperture(data, detect_fwhm=None, detect_snr=None,
                          ' have at last one of them.')
     sky, rms = background(data)
     s = detect(data, bkg=sky, rms=rms, snr=detect_snr, **detect_kwargs)
-    if _check_iterable(r):
+    if check_iterable(r):
         apertures = Table()
         for i in r:
             ap = aperture(data, s['x'], s['y'], i, r_in, r_out,
@@ -271,6 +277,7 @@ def _do_aperture(data, detect_fwhm=None, detect_snr=None,
             apertures['flux_r{}'.format(i)] = ap['flux']
             apertures['flux_r{}_error'.format(i)] = ap['flux_error']
 
+        # FIXME: Allways return the smallest aperture
         if r_find_best:
             snr = np.zeros(len(r))
             for i in range(len(r)):
@@ -302,7 +309,6 @@ def process_photometry(image, photometry_type, detect_fwhm=None,
                        r_out=60, r_find_best=True, psf_model='gaussian',
                        psf_niters=1):
     """Process standart photometry in one image, without calibrations."""
-    # TODO: split this function to make less complex
     image = _check_ccddata(image)
     data = image.data
     result = {'aperture': None,
@@ -336,7 +342,8 @@ def process_photometry(image, photometry_type, detect_fwhm=None,
     return result
 
 
-def _solve_photometry(table, wcs, identify_catalog, identify_catalog_name=None,
+def _solve_photometry(table, wcs, identify_catalog_file=None,
+                      identify_catalog_name=None,
                       identify_limit_angle='2 arcsec', science_catalog=None,
                       science_id_key=None, science_ra_key=None,
                       science_dec_key=None, montecarlo_iters=100,
@@ -344,12 +351,12 @@ def _solve_photometry(table, wcs, identify_catalog, identify_catalog_name=None,
                       solve_photometry_type=None):
     """Solve the absolute photometry of a field using a catalog."""
 
-    cat = Catalog.load_from_json(identify_catalog, identify_catalog_name)
+    cat = Catalog.load_from_json(identify_catalog_file, identify_catalog_name)
 
     if solve_photometry_type == 'montecarlo':
         solver = solve_photometry_montecarlo
         solver_kwargs = {'n_iter': montecarlo_iters,
-                         'n_star': montecarlo_percentage}
+                         'n_stars': montecarlo_percentage}
     elif solve_photometry_type == 'median':
         solver = solve_photometry_median
         solver_kwargs = {}
@@ -392,9 +399,12 @@ def _solve_photometry(table, wcs, identify_catalog, identify_catalog_name=None,
                                       dec_key=science_dec_key,
                                       flux_key=None,
                                       flux_error_key=None,
-                                      flux_unit=None)
-        res['sci_id'], _, _ = sci.query(ra, dec, None,
-                                        limit_angle=identify_limit_angle)
+                                      flux_unit=None,
+                                      filters=None,
+                                      prepend_id_key=False)
+        limit_angle = identify_limit_angle
+        res['sci_id'], _, _ = sci.query_id_mag(ra, dec, None,
+                                               limit_angle=limit_angle)
 
     res['cat_id'] = name
     res['cat_mag'] = mag
@@ -408,18 +418,27 @@ def _solve_photometry(table, wcs, identify_catalog, identify_catalog_name=None,
     return res
 
 
-def _solve_astrometry(header, table, shape):
+def _solve_astrometry(header, table, shape, ra_key=None, dec_key=None,
+                      plate_scale=None):
     """Solves the astrometry of a field and return a valid wcs."""
     wcs = WCS(header, relax=True)
     if not wcs.wcs.ctype[0]:
+        im_params = {}
+        if ra_key is not None and dec_key is not None:
+            im_params['ra_key'] = ra_key
+            im_params['dec_key'] = dec_key
+        if plate_scale is not None:
+            im_params['pltscl'] = plate_scale
+            im_params['radius'] = 5*plate_scale*np.max(shape)/3600
         imw, imh = shape
         x, y = table['x'], table['y']
         flux = table['flux']
-        wcs = solve_astrometry_xy(x, y, flux, header, imw, imh)
+        wcs = solve_astrometry_xy(x, y, flux, header, imw, imh,
+                                  image_params=im_params, return_wcs=True)
     return wcs
 
 
-def process_calib_photometry(image, identify_catalog,
+def process_calib_photometry(image, identify_catalog_file=None,
                              identify_catalog_name=None,
                              identify_limit_angle='2 arcsec',
                              science_catalog=None, science_ra_key=None,
@@ -451,7 +470,7 @@ def process_calib_photometry(image, identify_catalog,
 
     if ph['aperture'] is not None:
         res = _solve_photometry(ph['aperture'], wcs,
-                                identify_catalog=identify_catalog,
+                                identify_catalog_file=identify_catalog_file,
                                 identify_catalog_name=identify_catalog_name,
                                 identify_limit_angle=identify_limit_angle,
                                 science_catalog=science_catalog,
@@ -466,7 +485,7 @@ def process_calib_photometry(image, identify_catalog,
 
     if ph['psf'] is not None:
         res = _solve_photometry(ph['psf'], wcs,
-                                identify_catalog=identify_catalog,
+                                identify_catalog_file=identify_catalog_file,
                                 identify_catalog_name=identify_catalog_name,
                                 identify_limit_angle=identify_limit_angle,
                                 science_catalog=science_catalog,
@@ -516,18 +535,22 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type=None,
     def _process(tmp, ph, pos, pairs, idx, r=None):
         f = 'flux' if r is None else 'flux_r{}'.format(r)
         fe = 'flux_error' if r is None else 'flux_r{}_error'.format(r)
-        o = [ph[j][f][pairs[idx]['o']] for j in range(len(pos))]
-        e = [ph[j][f][pairs[idx]['e']] for j in range(len(pos))]
-        oe = [ph[j][fe][pairs[idx]['o']] for j in range(len(pos))]
-        ee = [ph[j][fe][pairs[idx]['e']] for j in range(len(pos))]
+        o = np.array([ph[j][f][pairs[idx]['o']] for j in range(len(pos))])
+        e = np.array([ph[j][f][pairs[idx]['e']] for j in range(len(pos))])
+        oe = np.array([ph[j][fe][pairs[idx]['o']] for j in range(len(pos))])
+        ee = np.array([ph[j][fe][pairs[idx]['e']] for j in range(len(pos))])
         res, err, therr = calculate_polarimetry(o, e, pos,
                                                 retarder=retarder_type,
                                                 o_err=oe, e_err=ee)
-        for k in res.keys() + ['sigma_theor', 'flux']:
+        for k in list(res.keys()) + ['sigma_theor', 'flux']:
             name = k if r is None else '{}_r{}'.format(k, r)
-            if name not in tmp.colnames():
+            if name not in tmp.colnames:
                 tmp.add_column(Column(name=name, dtype='f8',
                                       length=len(pairs)))
+                if k != 'sigma_theor':
+                    tmp.add_column(Column(name='{}_error'.format(name),
+                                          dtype='f8',
+                                          length=len(pairs)))
             if k == 'sigma_theor':
                 tmp[name][idx] = therr
             elif k == 'flux':
@@ -537,11 +560,11 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type=None,
                 tmp[name][idx] = res[k]
                 tmp['{}_error'.format(name)][idx] = err[k]
 
-    if 'flux' in ph.colnames:
+    if 'flux' in ph[0].colnames:
         for i in range(len(pairs)):
             _process(tmp, ph, pos, pairs, i, None)
 
-    for i in ph.colnames:
+    for i in ph[0].colnames:
         m = re.match('^flux_r\d+[\.\d]+$', i)
         if m:
             for j in range(len(pairs)):
@@ -560,7 +583,7 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
     kwargs are the arguments for the following functions:
     process_photometry, _solve_photometry
     """
-    s = _multi_process(_check_ccddata, image_set)
+    s = process_list(_check_ccddata, image_set)
     result = {'aperture': None, 'psf': None}
 
     apkwargs = {}
@@ -568,10 +591,10 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
               'r_in', 'r_out', 'r_find_best', 'psf_model', 'psf_niters']:
         if i in kwargs.keys():
             apkwargs[i] = kwargs.get(i)
-    ph = _multi_process(process_photometry, [i.data for i in s], **apkwargs)
+    ph = process_list(process_photometry, s, **apkwargs)
 
     solvekwargs = {}
-    for i in ['identify_catalog', 'identify_catalog_name',
+    for i in ['identify_catalog_file', 'identify_catalog_name',
               'identify_limit_angle', 'science_catalog',
               'science_id_key', 'science_ra_key', 'science_dec_key',
               'montecarlo_iters', 'montecarlo_percentage', 'filter',
@@ -581,9 +604,9 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
 
     ret = [int(i.header[retarder_key], 16) for i in s]
     for i in ['aperture', 'psf']:
-        if ph[i] is not None:
-            ap = _do_polarimetry(ph[i], ret,
-                                 retarder_positions=retarder_type,
+        if ph[0][i] is not None:
+            ap = _do_polarimetry([k[i] for k in ph], ret,
+                                 retarder_type=retarder_type,
                                  retarder_direction=retarder_direction,
                                  match_pairs_tolerance=match_pairs_tolerance,
                                  retarder_rotation=retarder_rotation)
@@ -591,15 +614,20 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
                 ast = Table()
                 ast['x'] = ap['xo']
                 ast['y'] = ap['yo']
-                for i in ap.colnames:
-                    if 'flux' in i:
-                        ast[i] = ap[i]
-                wcs = _solve_astrometry(s[0].header, ast, s[0].data.shape)
+                for n in ap.colnames:
+                    if 'flux' in n:
+                        ast[n] = ap[n]
+                wcs = _solve_astrometry(s[0].header, ast, s[0].data.shape,
+                                        ra_key=kwargs['ra_key'],
+                                        dec_key=kwargs['dec_key'],
+                                        plate_scale=kwargs['plate_scale'])
+                logger.debug('Astrometry solved! {}'.format(wcs))
                 tmp = _solve_photometry(ast, wcs, **solvekwargs)
-                for i in ap.colnames:
-                    tmp[i] = ap[i]
+                for n in ap.colnames:
+                    tmp[n] = ap[n]
             except Exception as e:
                 tmp = ap
+                raise e
 
             result[i] = tmp
 
@@ -629,6 +657,9 @@ class ReduceScript():
         j = json.load(open(filename, 'r'))
         self._default_kwargss.update(j)
 
+    def clear(self):
+        self._default_kwargss = OrderedDict()
+
     def process_product(self, filename, dataset='all'):
         """Process the products of a json file.
         If the configuration shares a variable with detaful values, it will be
@@ -636,7 +667,17 @@ class ReduceScript():
         prod_file = json.load(open(filename, 'r'))
         default = copy.copy(self._default_kwargss)
         if '__preload__' in prod_file.keys():
-            default.update(prod_file.pop('__preload__'))
+            preload = copy.copy(self._default_kwargss)
+            preload.update(prod_file.pop('__preload__'))
+            batch_key_replace(preload)
+            if 'preload_config_files' in preload.keys():
+                files = preload.pop('preload_config_files')
+                if check_iterable(files):
+                    for f in files:
+                        preload.update(json.load(open(f, 'r')))
+                else:
+                    preload.update(json.load(open(files, 'r')))
+            default.update(preload)
 
         if dataset not in ['all', None]:
             valid = dataset
@@ -646,11 +687,13 @@ class ReduceScript():
             if i in valid:
                 prod = copy.copy(default)
                 prod.update(v)
-                try:
-                    self.run(i, **prod)
-                except Exception as e:
-                    logger.warn('Problem in the process of {} product from'
-                                ' {} file. Passing it.'.format(i, filename))
+                batch_key_replace(prod)
+                # try:
+                self.run(i, **prod)
+                # except Exception as e:
+                #    logger.warn('Problem in the process of {} product from'
+                #               ' {} file. Passing it.\n'.format(i, filename) +
+                #               'Error: {}'.format(e))
 
     def run(self, name, **config):
         """Run a single product. Config is the dictionary of needed
@@ -667,7 +710,8 @@ class CalibScript(ReduceScript):
         super(CalibScript, self).__init__(config=config)
 
     def run(self, name, **config):
-        logger.debug("Product {} config:{}".format(name, str(config)))
+        for k in config.keys():
+            batch_key_replace(config, k)
         s = [os.path.join(config['raw_dir'], i) for i in config['sources']]
 
         calib_kwargs = {}
@@ -684,15 +728,21 @@ class CalibScript(ReduceScript):
             outname = config['result_file']
 
         mkdir_p(config['calib_dir'])
-        logger.debug("kwargs for create_calib are:{}".format(calib_kwargs))
-        logger.debug("Source files: {}".format(s))
-        logger.debug("Ourput file: {}".format(outname))
         return create_calib(s, outname, **calib_kwargs)
 
 
 class PhotometryScript(ReduceScript):
     def __init__(self, config=None):
         super(PhotometryScript, self).__init__(config=config)
+
+    def run(self, name, **config):
+        """Run this pipeline script"""
+        # TODO: finish this script
+
+
+class PolarimetryScript(ReduceScript):
+    def __init__(self, config=None):
+        super(PolarimetryScript, self).__init__(config=config)
 
     def run(self, name, **config):
         """Run this pipeline script"""
@@ -703,9 +753,60 @@ class PhotometryScript(ReduceScript):
         for i in ('master_bias', 'master_flat', 'dark_frame', 'badpixmask',
                   'prebin', 'gain_key', 'gain', 'rdnoise_key',
                   'combine_method', 'combine_sigma', 'exposure_key',
-                  'mem_limit', 'save_calib_path', 'combine_align_method'):
-            calib_kwargs[i] = config[i]
-
+                  'mem_limit', 'save_calib_path', 'combine_align_method',
+                  'calib_dir', 'product_dir'):
+            if i in config.keys():
+                calib_kwargs[i] = config[i]
         ccds = calib_science(s, **calib_kwargs)
-        print(ccds)
-        # TODO: finish this script
+
+        polkwargs = {}
+        for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
+                  'retarder_key', 'retarder_type', 'retarder_direction',
+                  'filter', 'plate_scale', 'photometry_type',
+                  'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
+                  'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
+                  'align_images', 'solve_photometry_type',
+                  'match_pairs_tolerance', 'montecarlo_iters',
+                  'montecarlo_percentage', 'identify_catalog_file',
+                  'identify_catalog_name', 'identify_limit_angle',
+                  'science_catalog', 'science_id_key', 'science_ra_key',
+                  'science_dec_key']:
+            if i in config.keys():
+                polkwargs[i] = config[i]
+
+        t = process_polarimetry(ccds, **polkwargs)
+
+        print(t)
+
+        t['aperture'].write('result.fits', format='fits')
+
+
+class MasterReduceScript(ReduceScript):
+    def __init__(self, config=None):
+        super(MasterReduceScript, self).__init__(config=config)
+
+    def run(self, name, **config):
+        if 'sources' in config.keys() and 'source_ls_pattern' in config.keys():
+            logger.warn('sources and sources_ls_pattern given. Using sources.')
+        elif 'sources_ls_pattern' in config.keys():
+            fs = glob.glob(os.path.join(config['raw_dir'],
+                                        config['sources_ls_pattern']))
+            config['sources'] = [os.path.basename(i) for i in fs]
+
+        # logger.debug("Product {} config:{}".format(name, str(config)))
+        if 'pipeline' not in config.keys():
+            raise ValueError('The config must specify what pipeline will be'
+                             ' used!')
+        if config['pipeline'] == 'photometry':
+            p = PhotometryScript()
+        elif config['pipeline'] == 'polarimetry':
+            p = PolarimetryScript()
+        elif config['pipeline'] == 'calib':
+            p = CalibScript()
+        elif config['pipeline'] == 'lightcurve':
+            logger.error('lightcurve pipeline not implemented yet')
+        else:
+            raise ValueError('Pipeline {} not'
+                             ' supported.'.format(config['pipeline']))
+
+        p.run(name, **config)

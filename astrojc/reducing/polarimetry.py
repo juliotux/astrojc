@@ -12,7 +12,9 @@ def estimate_dxdy(x, y, steps=[100, 30, 5, 3], bins=30):
     def _find_max(d, steps=[100, 30, 5, 3], bins=30):
         dx = 0
         for lim in (np.max(d), *steps):
-            histx = np.histogram(d, bins=bins, range=[dx-lim, dx+lim])
+            lo, hi = (dx-lim, dx+lim)
+            lo, hi = (lo, hi) if (lo < hi) else (hi, lo)
+            histx = np.histogram(d, bins=bins, range=[lo, hi])
             mx = np.argmax(histx[0])
             dx = (histx[1][mx]+histx[1][mx+1])/2
         return dx
@@ -52,16 +54,14 @@ def match_pairs(x, y, dx, dy, tolerance=1.0):
 
 def _quarter(psi, q, u, v, k):
     '''Z= Q*cos(2psi)**2 + U*sin(2psi)*cos(2psi) - V*sin(2psi)'''
-    # I introduced a k constant for handle normalization in the fitting
     psi2 = 2*psi
-    z = q*(np.cos(psi2)**2) + u*np.sin(psi)*np.cos(psi2) - v*np.sin(psi2) + k
+    z = q*(np.cos(psi2)**2) + u*np.sin(psi)*np.cos(psi2) - v*np.sin(psi2)
     return z
 
 
 def _half(psi, q, u, k):
     '''Z(I)= Q*cos(4psi(I)) + U*sin(4psi(I))'''
-    # I introduced a k constant for handle normalization in the fitting
-    return q*np.cos(4*psi) + u*np.sin(4*psi) + k
+    return q*np.cos(4*psi) + u*np.sin(4*psi)
 
 
 def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None):
@@ -69,18 +69,19 @@ def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None):
     if o_err is None or e_err is None:
         do_th_error = False
     else:
-        do_th_error = True
+        # temporary, not compute theoretical error
+        do_th_error = False
 
     if retarder == 'half':
         func = _half
-        args = ['q', 'u', 'k']
+        args = ['q', 'u']
     elif retarder == 'quarter':
         func = _quarter
-        args = ['q', 'u', 'v', 'k']
+        args = ['q', 'u', 'v']
     else:
         raise ValueError('retarder {} not supported.'.format(retarder))
 
-    z = np.subtract(o, e)/np.sum(o, e)
+    z = (np.array(o)-np.array(e))/(np.array(o)+np.array(e))
     result = OrderedDict()
     errors = OrderedDict()
     try:
@@ -92,6 +93,12 @@ def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None):
         for i in args:
             result[i] = np.nan
             errors[i] = np.nan
+
+    result['p'] = np.sqrt(result['q']**2 + result['u']**2)
+    result['p_error'] = errors['q'] + errors['u']
+
+    result['theta'] = np.arctan(result['q']/result['u'])
+    errors['theta'] = np.nan  # read references about this calculation
 
     if do_th_error:
         raise NotImplementedError('Implement the theoretical error of'

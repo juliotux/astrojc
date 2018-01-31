@@ -1,3 +1,5 @@
+#!/bin/env python3
+
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (QApplication, QDialog, QGridLayout, QLabel,
@@ -11,6 +13,10 @@ from functools import partial
 from os import path
 from collections import OrderedDict
 import json
+
+from astropy.logger import log as logger
+
+# logger.setLevel('DEBUG')
 
 
 class ConfigItemText(QWidget):
@@ -229,9 +235,13 @@ class ConfigEditorWidget(QWidget):
         self._order.setValue(order)
         self._name.setText(name)
 
+        logger.debug('loading config {} in order {} with {}'.format(name,
+                                                                    order,
+                                                                    config))
+
         for i, v in config.items():
             if isinstance(v, (list, tuple)):
-                self._add('file', i, v)
+                self._add('list', i, v)
             elif isinstance(v, bool):
                 self._add('bool', i, v)
             else:
@@ -407,6 +417,9 @@ class ListWidget(QWidget):
     def set_config(self, order, name, config):
         if self._table.rowCount() < order:
             self._table.setRowCount(order)
+        logger.debug('Setting config {} in order {} with {}'.format(name,
+                                                                    order,
+                                                                    config))
         self._table.setItem(order-1, 0, DisplayItemWidget(name, config))
 
     def load(self, filename):
@@ -429,7 +442,7 @@ class ListWidget(QWidget):
             item = self._table.item(i, 0)
             out[item.name] = item.config
 
-        json.dump(out, open(filename, 'w'))
+        json.dump(out, open(filename, 'w'), indent=2)
 
     def _load(self):
         f = QFileDialog.getOpenFileName()[0]
