@@ -5,6 +5,8 @@ import six
 import re
 import os
 import glob
+import shutil
+import time
 
 from astropy.io import fits  # , ascii
 # from astropy import units as u
@@ -13,6 +15,8 @@ from astropy.table import Table, Column
 from astropy.stats import gaussian_sigma_to_fwhm
 from astropy.wcs import WCS
 import numpy as np
+import pandas as pd
+from tempfile import mkdtemp, NamedTemporaryFile
 
 from ..logging import log as logger
 
@@ -41,6 +45,12 @@ from .polarimetry import estimate_dxdy, match_pairs, calculate_polarimetry
 from . import pccdpack_wrapper as pccd
 from ..io.mkdir import mkdir_p
 from ..py_utils import process_list, batch_key_replace, check_iterable
+
+
+DEBUG = True
+
+if DEBUG:
+    from matplotlib import pyplot as plt
 
 # Important: this is the default keys of the configuration files!
 '''
@@ -117,7 +127,7 @@ mem_limit               # maximum memory limit
 '''
 
 
-_mem_limit = 1e7
+_mem_limit = 1e9
 
 
 def create_calib(sources, result_file=None, calib_type=None, master_bias=None,
@@ -251,7 +261,7 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
     return s
 
 
-def _do_aperture(data, detect_fwhm=None, detect_snr=None,
+def _do_aperture(data, detect_fwhm=None, detect_snr=None, x=None, y=None,
                  r=np.arange(2, 20, 1), r_in=50, r_out=60, r_find_best=True):
     """Perform aperture photometry in a image"""
     if use_sep:
@@ -267,11 +277,16 @@ def _do_aperture(data, detect_fwhm=None, detect_snr=None,
     else:
         raise ValueError('Sep and Photutils aren\'t installed. You must'
                          ' have at last one of them.')
+
     sky, rms = background(data)
-    s = detect(data, bkg=sky, rms=rms, snr=detect_snr, **detect_kwargs)
+    if x is not None and y is not None:
+        s = np.array(list(zip(x, y)), dtype=[('x', 'f8'), ('y', 'f8')])
+    else:
+        s = detect(data, bkg=sky, rms=rms, snr=detect_snr, **detect_kwargs)
     if check_iterable(r):
         apertures = Table()
         for i in r:
+            # logger.debug('Aperture photometry in R={}'.format(i))
             ap = aperture(data, s['x'], s['y'], i, r_in, r_out,
                           err=rms)
             apertures['flux_r{}'.format(i)] = ap['flux']
@@ -285,13 +300,14 @@ def _do_aperture(data, detect_fwhm=None, detect_snr=None,
                 error = 'flux_r{}_error'.format(r[i])
                 snr[i] = np.median(apertures[flux]/apertures[error])
             arg = np.argmax(snr)
-            logger.debug('Best aperture matched: {}'.format(r[arg]))
+            # logger.debug([(i, j) for (i, j) in zip(r, snr)])
+            # logger.debug('Best aperture matched: {}'.format(r[arg]))
             apertures['flux'] = apertures['flux_r{}'.format(r[arg])]
             apertures['flux_error'] = apertures['flux_r{}'.format(r[arg]) +
                                                 '_error']
             apertures = apertures[sorted(apertures.colnames)]
     else:
-        ap = aperture(data, s['x'], s['y'], i, r_in, r_out, err=rms)
+        ap = aperture(data, s['x'], s['y'], r, r_in, r_out, err=rms)
         apertures = Table([ap['flux'], ap['flux_error']],
                           names=('flux', 'flux_error'))
     res_ap = Table()
@@ -307,7 +323,7 @@ def process_photometry(image, photometry_type, detect_fwhm=None,
                        detect_snr=None, box_size=None,
                        r=np.arange(2, 20, 1), r_in=50,
                        r_out=60, r_find_best=True, psf_model='gaussian',
-                       psf_niters=1):
+                       psf_niters=1, x=None, y=None):
     """Process standart photometry in one image, without calibrations."""
     image = _check_ccddata(image)
     data = image.data
@@ -319,18 +335,14 @@ def process_photometry(image, photometry_type, detect_fwhm=None,
         result['aperture'] = _do_aperture(data, detect_fwhm=detect_fwhm,
                                           detect_snr=detect_snr, r=r,
                                           r_in=r_in, r_out=r_out,
-                                          r_find_best=r_find_best)
+                                          r_find_best=r_find_best,
+                                          x=x, y=y)
+        x = result['aperture']['x']
+        y = result['aperture']['y']
 
     if photometry_type == 'psf' or photometry_type == 'both':
         if not use_phot:
             raise ValueError('You must have Photutils installed for psf.')
-
-        if photometry_type == 'both':
-            x = result['aperture']['x']
-            y = result['aperture']['y']
-        else:
-            x = None
-            y = None
 
         sigma = detect_fwhm/gaussian_sigma_to_fwhm
         ph = phot.psf_photometry(data, x, y, sigma_psf=sigma, snr=detect_snr,
@@ -342,16 +354,49 @@ def process_photometry(image, photometry_type, detect_fwhm=None,
     return result
 
 
-def _solve_photometry(table, wcs, identify_catalog_file=None,
-                      identify_catalog_name=None,
+def _identify_star(table, wcs, filter, identify_catalog_file,
+                   identify_catalog_name=None, identify_limit_angle='2 arcsec',
+                   science_catalog=None, science_id_key=None,
+                   science_ra_key=None, science_dec_key=None):
+    cat = Catalog.load_from_json(identify_catalog_file, identify_catalog_name)
+    x, y = table['x'], table['y']
+    ra, dec = wcs_xy2radec(x, y, wcs)
+
+    name, mag, mag_err = cat.query_id_mag(ra, dec, filter,
+                                          limit_angle=identify_limit_angle)
+
+    res = Table()
+    if science_catalog is not None:
+        sci = Catalog.load_from_ascii(science_catalog,
+                                      id_key=science_id_key,
+                                      ra_key=science_ra_key,
+                                      dec_key=science_dec_key,
+                                      flux_key=None,
+                                      flux_error_key=None,
+                                      flux_unit=None,
+                                      filters=None,
+                                      prepend_id_key=False)
+        limit_angle = identify_limit_angle
+        res['sci_id'], _, _ = sci.query_id_mag(ra, dec, None,
+                                               limit_angle=limit_angle)
+        res['ra'] = ra
+        res['dec'] = dec
+
+    res['cat_id'] = name
+    res['cat_mag'] = mag
+    res['cat_mag_err'] = mag_err
+
+    return res
+
+
+def _solve_photometry(table, wcs=None, cat_mag=None,
+                      identify_catalog_file=None, identify_catalog_name=None,
                       identify_limit_angle='2 arcsec', science_catalog=None,
                       science_id_key=None, science_ra_key=None,
                       science_dec_key=None, montecarlo_iters=100,
                       montecarlo_percentage=0.5, filter=None,
                       solve_photometry_type=None):
     """Solve the absolute photometry of a field using a catalog."""
-
-    cat = Catalog.load_from_json(identify_catalog_file, identify_catalog_name)
 
     if solve_photometry_type == 'montecarlo':
         solver = solve_photometry_montecarlo
@@ -367,55 +412,34 @@ def _solve_photometry(table, wcs, identify_catalog_file=None,
         raise ValueError('solve_photometry_type {} not'
                          ' supported'.format(solve_photometry_type))
 
-    x, y = table['x'], table['y']
-    ra, dec = wcs_xy2radec(x, y, wcs)
-
-    name, mag, mag_err = cat.query_id_mag(ra, dec, filter,
-                                          limit_angle=identify_limit_angle)
+    if cat_mag is None:
+        id_table = _identify_star(table=table, wcs=wcs, filter=filter,
+                                  identify_catalog_file=identify_catalog_file,
+                                  identify_catalog_name=identify_catalog_name,
+                                  science_catalog=science_catalog,
+                                  science_id_key=science_id_key,
+                                  science_ra_key=science_ra_key,
+                                  science_dec_key=science_dec_key)
+        cat_mag = id_table['cat_mag']
 
     mags = Table()
 
     if 'flux' in table.colnames:
         mags['mag'], mags['mag_err'] = solver(table['flux'],
                                               table['flux_error'],
-                                              mag, **solver_kwargs)
+                                              cat_mag, **solver_kwargs)
 
     for i in table.colnames:
-        m = re.match('^flux_r\d+[\.\d]+$', i)
+        m = re.match('^flux_r\d+(\.\d+)?$', i)
         if m:
-            r = re.findall('\d+[\.\d]+', i)[0]
+            r = i.strip('flux_r')
             ma, err = solver(table['flux_r{}'.format(r)],
                              table['flux_r{}_error'.format(r)],
-                             mag, **solver_kwargs)
+                             cat_mag, **solver_kwargs)
             mags['mag_r{}'.format(r)] = ma
             mags['mag_r{}_err'.format(r)] = err
 
-    res = Table()
-
-    if science_catalog is not None:
-        sci = Catalog.load_from_ascii(science_catalog,
-                                      id_key=science_id_key,
-                                      ra_key=science_ra_key,
-                                      dec_key=science_dec_key,
-                                      flux_key=None,
-                                      flux_error_key=None,
-                                      flux_unit=None,
-                                      filters=None,
-                                      prepend_id_key=False)
-        limit_angle = identify_limit_angle
-        res['sci_id'], _, _ = sci.query_id_mag(ra, dec, None,
-                                               limit_angle=limit_angle)
-
-    res['cat_id'] = name
-    res['cat_mag'] = mag
-    res['cat_mag_err'] = mag_err
-
-    for i in table.colnames:
-        res[i] = table[i]
-    for i in mags.colnames:
-        res[i] = mags[i]
-
-    return res
+    return mags
 
 
 def _solve_astrometry(header, table, shape, ra_key=None, dec_key=None,
@@ -432,6 +456,7 @@ def _solve_astrometry(header, table, shape, ra_key=None, dec_key=None,
             im_params['radius'] = 5*plate_scale*np.max(shape)/3600
         imw, imh = shape
         x, y = table['x'], table['y']
+        # TODO: when note r_find_best, this key do not exists
         flux = table['flux']
         wcs = solve_astrometry_xy(x, y, flux, header, imw, imh,
                                   image_params=im_params, return_wcs=True)
@@ -506,16 +531,35 @@ def process_light_curve(image_set, jd_key='JD', align_images=True, **kwargs):
     """Process photometry in different files and make lightcurve with them."""
 
 
-def _do_polarimetry(phot_table, retarder_positions, retarder_type=None,
-                    retarder_direction=None, match_pairs_tolerance=1.0,
-                    retarder_rotation=22.5):
-    """Calculate the polarimetry of a given photometry table."""
-    ph = phot_table
-    tx = ph[0]['x']
-    ty = ph[0]['y']
+def _find_pairs(x, y, match_pairs_tolerance):
+    dx, dy = estimate_dxdy(x, y)
+    pairs = match_pairs(x, y, dx, dy, tolerance=match_pairs_tolerance)
 
-    dx, dy = estimate_dxdy(tx, ty)
-    pairs = match_pairs(tx, ty, dx, dy, tolerance=match_pairs_tolerance)
+    o_idx = pairs['o']
+    e_idx = pairs['e']
+
+    tmp = Table()
+    tmp['xo'] = x[o_idx]
+    tmp['yo'] = y[o_idx]
+    tmp['xe'] = x[e_idx]
+    tmp['ye'] = y[e_idx]
+
+    return tmp, pairs
+
+
+def _do_polarimetry(phot_table, retarder_positions, retarder_type,
+                    retarder_direction, pairs,
+                    retarder_rotation=22.5):
+    """Calculate the polarimetry of a given photometry table.
+
+    phot_tables is a list of tables containing ['flux', 'flux_error']
+    keys.
+    """
+    ph = phot_table
+
+    if 'flux' not in ph[0].colnames or 'flux_error' not in ph[0].colnames:
+        raise ValueError('Table for polarimetry must contain "flux" and'
+                         ' "flux_error" keys.')
 
     if retarder_direction == 'cw':
         retarder_direction = -1
@@ -523,53 +567,37 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type=None,
         retarder_direction = 1
     pos = np.array(retarder_positions)*retarder_rotation*retarder_direction
 
-    o_idx = pairs['o']
-    e_idx = pairs['e']
-
     tmp = Table()
-    tmp['xo'] = tx[o_idx]
-    tmp['yo'] = ty[o_idx]
-    tmp['xe'] = tx[e_idx]
-    tmp['ye'] = ty[e_idx]
 
-    def _process(tmp, ph, pos, pairs, idx, r=None):
-        f = 'flux' if r is None else 'flux_r{}'.format(r)
-        fe = 'flux_error' if r is None else 'flux_r{}_error'.format(r)
-        o = np.array([ph[j][f][pairs[idx]['o']] for j in range(len(pos))])
-        e = np.array([ph[j][f][pairs[idx]['e']] for j in range(len(pos))])
-        oe = np.array([ph[j][fe][pairs[idx]['o']] for j in range(len(pos))])
-        ee = np.array([ph[j][fe][pairs[idx]['e']] for j in range(len(pos))])
+    def _process(idx):
+        f = 'flux'
+        fe = 'flux_error'
+        o = np.array([ph[j][f][pairs[idx]['o']] for j in range(len(ph))])
+        e = np.array([ph[j][f][pairs[idx]['e']] for j in range(len(ph))])
+        oe = np.array([ph[j][fe][pairs[idx]['o']] for j in range(len(ph))])
+        ee = np.array([ph[j][fe][pairs[idx]['e']] for j in range(len(ph))])
         res, err, therr = calculate_polarimetry(o, e, pos,
                                                 retarder=retarder_type,
                                                 o_err=oe, e_err=ee)
-        for k in list(res.keys()) + ['sigma_theor', 'flux']:
-            name = k if r is None else '{}_r{}'.format(k, r)
-            if name not in tmp.colnames:
-                tmp.add_column(Column(name=name, dtype='f8',
+        for k in ['flux'] + list(res.keys()) + ['sigma_theor']:
+            if k not in tmp.colnames:
+                tmp.add_column(Column(name=k, dtype='f8',
                                       length=len(pairs)))
                 if k != 'sigma_theor':
-                    tmp.add_column(Column(name='{}_error'.format(name),
+                    tmp.add_column(Column(name='{}_error'.format(k),
                                           dtype='f8',
                                           length=len(pairs)))
             if k == 'sigma_theor':
-                tmp[name][idx] = therr
+                tmp[k][idx] = therr
             elif k == 'flux':
-                tmp[name][idx] = np.sum(o)+np.sum(e)
-                tmp['{}_error'.format(name)][idx] = np.sum(oe)+np.sum(ee)
+                tmp[k][idx] = np.sum(o)+np.sum(e)
+                tmp['{}_error'.format(k)][idx] = np.sum(oe)+np.sum(ee)
             else:
-                tmp[name][idx] = res[k]
-                tmp['{}_error'.format(name)][idx] = err[k]
+                tmp[k][idx] = res[k]
+                tmp['{}_error'.format(k)][idx] = err[k]
 
-    if 'flux' in ph[0].colnames:
-        for i in range(len(pairs)):
-            _process(tmp, ph, pos, pairs, i, None)
-
-    for i in ph[0].colnames:
-        m = re.match('^flux_r\d+[\.\d]+$', i)
-        if m:
-            for j in range(len(pairs)):
-                r = re.findall('\d+[\.\d]+', i)[0]
-                _process(tmp, ph, pos, pairs, j, r)
+    for i in range(len(pairs)):
+        _process(idx=i)
 
     return tmp
 
@@ -586,52 +614,161 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
     s = process_list(_check_ccddata, image_set)
     result = {'aperture': None, 'psf': None}
 
+    sources = _do_aperture(np.sum([i.data for i in s], axis=0),
+                           detect_fwhm=kwargs['detect_fwhm'],
+                           detect_snr=kwargs['detect_snr'],
+                           r=5)
+
+    res_tmp, pairs = _find_pairs(sources['x'], sources['y'],
+                                 match_pairs_tolerance=match_pairs_tolerance)
+    try:
+        wcs = _solve_astrometry(s[0].header, sources[pairs['o']],
+                                s[0].data.shape,
+                                ra_key=kwargs['ra_key'],
+                                dec_key=kwargs['dec_key'],
+                                plate_scale=kwargs['plate_scale'])
+        idkwargs = {}
+        for i in ['identify_catalog_file', 'identify_catalog_name', 'filter',
+                  'identify_limit_angle', 'science_catalog',
+                  'science_id_key', 'science_ra_key', 'science_dec_key']:
+            if i in kwargs.keys():
+                idkwargs[i] = kwargs[i]
+        ids = _identify_star(Table([res_tmp['xo'], res_tmp['yo']],
+                                   names=('x', 'y')), wcs,
+                             **idkwargs)
+        solve_phot = True
+    except Exception as e:
+        solve_phot = False
+        ids = Table()
+        logger.warn('Astrometry not solved. Ignoring photometry solving. {}'
+                    .format(e))
+
     apkwargs = {}
-    for i in ['photometry_type', 'detect_fwhm', 'detect_snr', 'box_size', 'r',
+    for i in ['photometry_type', 'detect_fwhm', 'detect_snr', 'box_size',
               'r_in', 'r_out', 'r_find_best', 'psf_model', 'psf_niters']:
         if i in kwargs.keys():
             apkwargs[i] = kwargs.get(i)
-    ph = process_list(process_photometry, s, **apkwargs)
 
-    solvekwargs = {}
-    for i in ['identify_catalog_file', 'identify_catalog_name',
-              'identify_limit_angle', 'science_catalog',
-              'science_id_key', 'science_ra_key', 'science_dec_key',
-              'montecarlo_iters', 'montecarlo_percentage', 'filter',
-              'solve_photometry_type']:
-        if i in kwargs.keys():
-            solvekwargs[i] = kwargs.get(i)
+    ph = {}
+    if check_iterable(kwargs['r']):
+        for i in kwargs['r']:
+            p = process_list(process_photometry, s, x=sources['x'],
+                             y=sources['y'],
+                             r=i, **apkwargs)
+            ph[i] = {}
+            ph[i]['aperture'] = [Table([j['aperture']['flux'],
+                                        j['aperture']['flux_error']])
+                                 if j['aperture'] is not None else None
+                                 for j in p]
+            ph[i]['psf'] = [Table([j['psf']['flux'], j['psf']['flux_error']])
+                            if j['psf'] is not None else None
+                            for j in p]
+    else:
+        p = process_list(process_photometry, s, x=sources['x'],
+                         y=sources['y'],
+                         r=kwargs['r'], **apkwargs)
+        ph[kwargs['r']] = {}
+        ph[kwargs['r']]['aperture'] = [Table([j['aperture']['flux'],
+                                              j['aperture']['flux_error']])
+                                       if j['aperture'] is not None else None
+                                       for j in p]
+        ph[kwargs['r']]['psf'] = [Table([j['psf']['flux'],
+                                         j['psf']['flux_error']])
+                                  if j['psf'] is not None else None
+                                  for j in p]
+
+    if solve_phot:
+        solvekwargs = {}
+        for i in ['montecarlo_iters', 'montecarlo_percentage',
+                  'solve_photometry_type']:
+            if i in kwargs.keys():
+                solvekwargs[i] = kwargs.get(i)
 
     ret = [int(i.header[retarder_key], 16) for i in s]
-    for i in ['aperture', 'psf']:
-        if ph[0][i] is not None:
-            ap = _do_polarimetry([k[i] for k in ph], ret,
-                                 retarder_type=retarder_type,
-                                 retarder_direction=retarder_direction,
-                                 match_pairs_tolerance=match_pairs_tolerance,
-                                 retarder_rotation=retarder_rotation)
-            try:
-                ast = Table()
-                ast['x'] = ap['xo']
-                ast['y'] = ap['yo']
-                for n in ap.colnames:
-                    if 'flux' in n:
-                        ast[n] = ap[n]
-                wcs = _solve_astrometry(s[0].header, ast, s[0].data.shape,
-                                        ra_key=kwargs['ra_key'],
-                                        dec_key=kwargs['dec_key'],
-                                        plate_scale=kwargs['plate_scale'])
-                logger.debug('Astrometry solved! {}'.format(wcs))
-                tmp = _solve_photometry(ast, wcs, **solvekwargs)
-                for n in ap.colnames:
-                    tmp[n] = ap[n]
-            except Exception as e:
-                tmp = ap
-                raise e
 
-            result[i] = tmp
+    for ri in ph:
+        for i in ['aperture', 'psf']:
+            if result[i] is None and ph[ri][i][0] is not None:
+                result[i] = Table()
+                for m in ids.colnames:
+                    result[i][m] = ids[m]
+
+            if ph[ri][i][0] is not None:
+                ap = _do_polarimetry([k for k in ph[ri][i]], ret,
+                                     retarder_type=retarder_type,
+                                     retarder_direction=retarder_direction,
+                                     pairs=pairs,
+                                     retarder_rotation=retarder_rotation)
+                if solve_phot:
+                    tmp = _solve_photometry(ap, cat_mag=ids['cat_mag'],
+                                            **solvekwargs)
+                    ap['mag'] = tmp['mag']
+                    ap['mag_err'] = tmp['mag_err']
+
+                for a in ap.colnames:
+                    result[i]['r={}_{}'.format(ri, a)] = ap[a]
 
     return result
+
+
+def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
+                 retarder_rotation=22.5, retarder_direction=None,
+                 save_calib_path=None, r=np.arange(1, 21, 1),
+                 r_in=60, r_out=70, gain_key=None, rdnoise_key=None,
+                 **kwargs):
+    files = []
+    dtmp = mkdtemp(prefix='pccdpack')
+    for i in range(len(image_set)):
+        if isinstance(image_set[i], ccdproc.CCDData):
+            name = os.path.join(dtmp, "image{:02d}.fits".format(i))
+            image_set[i].write(name)
+            logger.debug("image {} saved to {}".format(i, name))
+            files.append(name)
+        elif isinstance(image_set[i], six.string_types):
+            files.append(os.path.join(save_calib_path,
+                                      os.path.basename(image_set[i])))
+
+    script = pccd.create_script(result_dir=dtmp, image_list=files,
+                                star_name='object', apertures=r, r_ann=r_in,
+                                r_dann=r_out-r_in,
+                                gain_key=gain_key,
+                                readnoise_key=rdnoise_key,
+                                retarder=retarder_type,
+                                auto_pol=True)
+    print('\n\nExecute the following script:\n-----------------------------\n')
+    print(script)
+    time.sleep(0.5)
+    print('------------------------------------\n')
+    input('Press Enter when finished!')
+
+    out_table = pccd.read_out(os.path.join(dtmp, 'object.out'),
+                              os.path.join(dtmp, 'object.ord'))
+    dat_table = Table.read(os.path.join(dtmp, 'dat.001'),
+                           format='ascii.no_header')
+    log_table = pccd.read_log(os.path.join(dtmp, 'object.log'))
+
+    x, y = out_table['X0'], out_table['Y0']
+    data = ccdproc.check_ccddata(files[0])
+    ft = _do_aperture(data.data, x=x, y=y, r=5)
+    astkwargs = {}
+    for i in ['ra_key', 'dec_key', 'plate_scale']:
+        if i in kwargs.keys():
+            astkwargs[i] = kwargs[i]
+    wcs = _solve_astrometry(data.header, ft, data.data.shape, **astkwargs)
+
+    idkwargs = {}
+    for i in ['identify_catalog_file', 'identify_catalog_name', 'filter',
+              'identify_limit_angle', 'science_catalog',
+              'science_id_key', 'science_ra_key', 'science_dec_key']:
+        if i in kwargs.keys():
+            idkwargs[i] = kwargs[i]
+    ids = _identify_star(Table([x, y], names=('x', 'y')), wcs, **idkwargs)
+    out_table['cat_id'] = ids['cat_id']
+    out_table['sci_id'] = ids['sci_id']
+
+    shutil.rmtree(dtmp)
+
+    return out_table, dat_table, log_table
 
 
 class ReduceScript():
@@ -672,11 +809,14 @@ class ReduceScript():
             batch_key_replace(preload)
             if 'preload_config_files' in preload.keys():
                 files = preload.pop('preload_config_files')
+                other = {}
                 if check_iterable(files):
                     for f in files:
-                        preload.update(json.load(open(f, 'r')))
+                        other.update(json.load(open(f, 'r')))
                 else:
-                    preload.update(json.load(open(files, 'r')))
+                    other.update(json.load(open(files, 'r')))
+                other.update(preload)
+                preload = other
             default.update(preload)
 
         if dataset not in ['all', None]:
@@ -746,7 +886,6 @@ class PolarimetryScript(ReduceScript):
 
     def run(self, name, **config):
         """Run this pipeline script"""
-        product_dir = config['product_dir']
         s = [os.path.join(config['raw_dir'], i) for i in config['sources']]
 
         calib_kwargs = {}
@@ -754,7 +893,7 @@ class PolarimetryScript(ReduceScript):
                   'prebin', 'gain_key', 'gain', 'rdnoise_key',
                   'combine_method', 'combine_sigma', 'exposure_key',
                   'mem_limit', 'save_calib_path', 'combine_align_method',
-                  'calib_dir', 'product_dir'):
+                  'calib_dir', 'product_dir', 'remove_cosmics'):
             if i in config.keys():
                 calib_kwargs[i] = config[i]
         ccds = calib_science(s, **calib_kwargs)
@@ -776,10 +915,7 @@ class PolarimetryScript(ReduceScript):
 
         t = process_polarimetry(ccds, **polkwargs)
 
-        print(t)
-
-        t['aperture'].write('result.fits', format='fits')
-
+        pccd = run_pccdpack(ccds, **polkwargs)
 
 class MasterReduceScript(ReduceScript):
     def __init__(self, config=None):
@@ -791,9 +927,12 @@ class MasterReduceScript(ReduceScript):
         elif 'sources_ls_pattern' in config.keys():
             fs = glob.glob(os.path.join(config['raw_dir'],
                                         config['sources_ls_pattern']))
-            config['sources'] = [os.path.basename(i) for i in fs]
+            config['sources'] = [os.path.basename(i) for i in sorted(fs)]
 
-        # logger.debug("Product {} config:{}".format(name, str(config)))
+        config['sources'] = [i for i in config['sources']
+                             if i not in config['exclude_images']]
+
+        logger.debug("Product {} config:{}".format(name, str(config)))
         if 'pipeline' not in config.keys():
             raise ValueError('The config must specify what pipeline will be'
                              ' used!')

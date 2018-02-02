@@ -95,7 +95,7 @@ def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None):
             errors[i] = np.nan
 
     result['p'] = np.sqrt(result['q']**2 + result['u']**2)
-    result['p_error'] = errors['q'] + errors['u']
+    errors['p'] = errors['q'] + errors['u']
 
     result['theta'] = np.arctan(result['q']/result['u'])
     errors['theta'] = np.nan  # read references about this calculation

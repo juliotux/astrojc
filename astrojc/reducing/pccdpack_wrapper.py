@@ -5,14 +5,131 @@ import os
 import re
 from collections import OrderedDict
 import numpy as np
+import fortranformat as ff
 
 from astropy.io import ascii as asci
 from astropy.io import fits
-from tempfile import NamedTemporaryFile
+from astropy.table import Table, Column
+# from tempfile import NamedTemporaryFile
+
+from ..logging import log as logger
+
+
+def read_qphot_mag(filename):
+    """Read the .mag.1 file created by qphot and return it to a Table."""
+    # TODO: perform reads with fortranformat
+    f = open(filename, 'r').readlines()
+    fields = []
+    units = []
+    formats = []
+
+    header_created = False
+    row = []
+
+    cont = False
+    group = False
+
+    def _read_data(l):
+        cont = False
+        group = False
+        if l[-1] == '\\':
+            cont = True
+        if l[-2] == '*':
+            group = True
+
+        data = []
+        for d in l[:-2].split():
+            if d == 'INDEF':
+                d = np.nan
+            else:
+                try:
+                    d = float(d)
+                except ValueError:
+                    pass
+            data.append(d)
+
+        return data, cont, group
+
+    t = Table()
+    for i in f:
+        i = i.strip('\n')
+        if i[:2] == '#K':
+            mname = i[2:14].strip()
+            mvalue = i[16:39].strip()
+            munit = i[40:51].strip()
+            mformat = i.split('%')[1].strip()[-1]
+            if mformat == 's':
+                pass
+            elif mformat == 'd':
+                try:
+                    mvalue = int(mvalue)
+                except Exception:
+                    pass
+            elif mformat == 'g':
+                try:
+                    mvalue = float(mvalue)
+                except Exception:
+                    pass
+            elif mformat == 'b':
+                if mvalue == 'no':
+                    mvalue = False
+                elif mvalue == 'yes':
+                    mvalue = True
+                else:
+                    logger.warn('A strange bool key value found: {} {}'
+                                .format(mname, mvalue))
+            t.meta[mname] = (mvalue, munit)
+        elif i[:2] == '#N':
+            for n in i[2:-1].split():
+                fields.append(n)
+        elif i[:2] == '#U':
+            for n in i[2:-1].split():
+                units.append(n)
+        elif i[:2] == '#F':
+            for n in i[2:-1].split():
+                formats.append(n)
+        elif i[0] != '#':
+            if not header_created:
+                for n, u, f in zip(fields, units, formats):
+                    if f[-1] == 's':
+                        dtype = 'S32'
+                    elif f[-1] == 'd':
+                        dtype = 'int16'
+                    elif f[-1] == 'g':
+                        dtype = 'float64'
+                    elif f[-1] == 'b':
+                        dtype = 'bool'
+                    else:
+                        dtype = 'S32'
+                    try:
+                        t.add_column(Column(name=n, unit=u, dtype=dtype))
+                    except Exception as e:
+                        print(n)
+                        raise e
+                header_created = True
+
+            data, cont, group = _read_data(i)
+
+            for k in data:
+                row.append(k)
+
+            if not cont:
+                # FIXME: simply ignore the mismatches
+                try:
+                    t.add_row(row)
+                except Exception as e:
+                    pass
+                row = []
+
+            if group:
+                row = row[:-len(data)]
+
+    return t
 
 
 def read_log(log_file):
     """Read the .log file from pccdpack and return a dict with the results"""
+
     f = open(log_file, 'r')
     f = f.readlines()
 
@@ -22,6 +139,7 @@ def read_log(log_file):
 
     wave_n_pos = 16
     wave_pos = None
+    wavetype = None
 
     read_star = False
     read_apertures = False
@@ -39,6 +157,8 @@ def read_log(log_file):
             wave_pos = [int(v) for v in re.findall('\d+', lin)[:-1]]
         if re.match('No. of apertures observed:\s+\d+', lin):
             n_apertures = int(re.findall('\d+', lin)[0])
+        if re.match('Waveplate type :', lin):
+            wavetype = lin.split(':')[1].strip()
 
         if re.match('STAR # \s+\d+\s+ .*', lin):
             star = int(re.findall('\d+', lin)[0])
@@ -56,7 +176,19 @@ def read_log(log_file):
 
         if read_star and read_apertures:
             plin = f[params_index].strip('\n').strip(' ')
-            params = [float(k) for k in plin.split()]
+            if wavetype == 'half':
+                form = '1x, 4(f10.6), 2x, f8.2, 2x, f10.6'
+                npar = 6
+            elif wavetype == 'quarter':
+                form = 'f10.6,f10.6,2f10.6,2f10.6,f6.1,f10.6,f11.7'
+                npar = 8
+            else:
+                raise NotImplementedError('Not implementd for {}'
+                                          .format(wavetype))
+            try:
+                params = ff.FortranRecordReader(form).read(plin)
+            except ValueError:
+                params = [np.nan]*npar
             plin = f[params_index-1].strip('\n').strip(' ')
             pnames = plin.split()
             del plin
@@ -65,8 +197,12 @@ def read_log(log_file):
 
             z = []
             while len(z) < wave_n_pos:
-                zlin = f[z_index].strip('\n').strip(' ')
-                for k in zlin.split():
+                zread = ff.FortranRecordReader('(1x,4(f10.6))')
+                try:
+                    zlin = zread.read(f[z_index])
+                except Exception as e:
+                    zlin = [np.nan]*4
+                for k in zlin:
                     z.append(float(k))
                 z_index += 1
                 del zlin
@@ -82,7 +218,29 @@ def read_log(log_file):
 
 def read_out(file_out, file_ord=None):
     """Read the out file, with optionally the ord file for x,y coords."""
-    fout = asci.read(file_out)
+    def _read_line(l, n):
+        if n == 8:
+            form = '1x, 4(f10.6), 2x, f8.2, 2x, f10.6'
+            lenght = 63
+        elif n == 10:
+            form = 'f10.6,f10.6,2f10.6,2f10.6,f6.1,f10.6,f11.7'
+            lenght = 87
+
+        try:
+            lin = ff.FortranRecordReader(form).read(l[:lenght])
+        except ValueError:
+            lin = [np.nan] * n-2
+
+        ap, nstar = l[lenght:].split()
+        lin.append(float(ap))
+        lin.append(int(nstar))
+        return lin
+
+    fout = open(file_out, 'r').readlines()
+    t = Table(names=fout[0].strip('\n').split())
+    for i in range(1, len(fout)):
+        t.add_row(_read_line(fout[i].strip('\n'), len(t.colnames)))
+    fout = t
     if file_ord is not None:
         ford = asci.read(file_ord)
         fout['X0'] = [ford['XCENTER'][2*i] for i in range(len(fout))]
@@ -93,10 +251,11 @@ def read_out(file_out, file_ord=None):
 
 
 def create_script(result_dir, image_list, star_name,
-                  filter, plot=True, apertures=np.arange(1, 21, 1),
+                  apertures=np.arange(1, 21, 1),
                   r_ann=60.0, r_dann=10.0, n_retarder_positions=16,
                   gain_key='GAIN', readnoise_key='RDNOISE',
-                  auto_pol=False, normalize=True, retarder='half'):
+                  auto_pol=False, normalize=True, retarder='half',
+                  move=True):
     """Creates a script to easy execute pccdpack for a set of images."""
     wd = result_dir
     try:
@@ -108,12 +267,13 @@ def create_script(result_dir, image_list, star_name,
     # FIXME: when not, the pccdpack cannot read the generated .mag.1 files
     imlist = [os.path.basename(i) for i in image_list]
     d = os.path.dirname(image_list[0])
-    f = NamedTemporaryFile(prefix='pccdpack', suffix='.txt')
-    with open(f.name, 'w') as tmp:
-        [tmp.write(i + '\n') for i in imlist]
+    # f = NamedTemporaryFile(prefix='pccdpack', suffix='.txt')
+    # with open(f.name, 'w') as tmp:
+    #     [tmp.write(i + '\n') for i in imlist]
 
     kwargs = {'object': star_name,
-              'lista': '@' + f.name,
+              # 'lista': '@' + f.name,
+              'lista': ','.join(imlist),
               'imagem': imlist[0],
               'pospars': np.min([len(image_list), n_retarder_positions]),
               'nume_la': len(image_list),
@@ -140,8 +300,11 @@ def create_script(result_dir, image_list, star_name,
     command = comm + ' '
     command += ' '.join(['{}={}'.format(i, j) for (i, j) in kwargs.items()])
 
-    print("cd {}".format(d))
-    print(command)
-    print("mv *.pdf *.ord *.mag.1 *.coo *.log *.shift *.out *.old *.eps *.par"
-          " list_mag *.dat *.dao dat.* *.nfo {0}\n".format(wd))
-    input('Press enter when finished.')
+    script = "cd {}\n{}\n".format(d, command)
+
+    if wd != d and move:
+        script += ("mv *.pdf *.ord *.mag.1 *.coo *.log *.shift *.out "
+                   "*.old *.eps *.par list_mag *.dat *.dao dat.* *.nfo {}\n"
+                   .format(wd))
+
+    return script
