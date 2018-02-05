@@ -886,6 +886,7 @@ class PolarimetryScript(ReduceScript):
 
     def run(self, name, **config):
         """Run this pipeline script"""
+        product_dir = config['product_dir']
         s = [os.path.join(config['raw_dir'], i) for i in config['sources']]
 
         calib_kwargs = {}
@@ -915,7 +916,50 @@ class PolarimetryScript(ReduceScript):
 
         t = process_polarimetry(ccds, **polkwargs)
 
+        hdus = []
+        for i in t.keys():
+            header_keys = ['retarder_type', 'retarder_rotation',
+                           'retarder_direction', 'align_images',
+                           'solve_photometry_type', 'plate_scale']
+            if i == 'aperture':
+                header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
+                                'detect_snr']
+            elif i == 'psf':
+                header_keys += ['psf_model', 'box_size', 'psf_niters']
+
+            if config.get('solve_photometry_type', None) == 'montecarlo':
+                header_keys += ['montecarlo_iters', 'montecarlo_percentage']
+
+            if config.get('identify_catalog_name', None) is not None:
+                header_keys += ['identify_catalog_name',
+                                'identify_limit_angle']
+
+            hdu = fits.BinTableHDU(t[i], name="{}_polarimetry".format(i))
+            for k in header_keys:
+                if k in config.keys():
+                    v = config[k]
+                    key = 'hierarch astrojc {}'.format(k)
+                    if check_iterable(v):
+                        hdu.header[key] = ','.join([str(m) for m in v])
+                    else:
+                        hdu.header[key] = v
+            hdus.append(hdu)
+
+        image = ccdproc.combine(ccds, method='sum',
+                                mem_limit=config.get('mem_limit', _mem_limit))
+
+        hdulist = fits.HDUList([*image.to_hdu(wcs_relax=True), *hdus])
+        hdulist.writeto(os.path.join(product_dir,
+                                     "polarimetry_astrojc_{}".format(name)))
+
         pccd = run_pccdpack(ccds, **polkwargs)
+        hdus = []
+        hdus.append(fits.BinTableHDU(pccd[0], name='out_table'))
+        hdus.append(fits.BinTableHDU(pccd[1], name='dat_table'))
+        hdulist = fits.HDUList([*hdus])
+        hdulist.writeto(os.path.join(product_dir,
+                                     "polarimetry_pccdpack_{}".format(name)))
+
 
 class MasterReduceScript(ReduceScript):
     def __init__(self, config=None):
