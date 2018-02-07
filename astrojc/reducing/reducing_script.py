@@ -193,10 +193,8 @@ def create_calib(sources, result_file=None, calib_type=None, master_bias=None,
 def _calib_image(image, product_dir=None, master_bias=None, master_flat=None,
                  dark_frame=None, badpixmask=None, prebin=None, gain=None,
                  gain_key='GAIN', rdnoise_key='RDNOISE', exposure_key=None,
-                 calib_dir=None, save_calib_path=None):
+                 calib_dir=None):
     """Calib one single science image with calibration frames."""
-    # TODO: save calibrated file. Problem: get the file name if image!=str
-    im = image
     image = _check_ccddata(image)
 
     if prebin is not None:
@@ -219,11 +217,6 @@ def _calib_image(image, product_dir=None, master_bias=None, master_flat=None,
                                   exposure_key=exposure_key,
                                   badpixmask=badpixmask)
 
-    if save_calib_path is not None and isinstance(im, six.string_types):
-        base = os.path.basename(im)
-        mkdir_p(save_calib_path)
-        image.write(os.path.join(save_calib_path, base))
-
     return image
 
 
@@ -232,19 +225,33 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
                   rdnoise_key='RDNOISE', combine_method=None,
                   combine_sigma=None, exposure_key=None, mem_limit=_mem_limit,
                   product_dir=None, combine_align_method=None, calib_dir=None,
-                  save_calib_path=None, remove_cosmics=True):
+                  save_calib_path=None, remove_cosmics=True,
+                  return_filename=False):
     """Calib science images with gain, flat, bias and binning."""
     s = process_list(_calib_image, sources, master_bias=master_bias,
                      master_flat=master_flat, dark_frame=dark_frame,
                      badpixmask=badpixmask, prebin=prebin, gain=gain,
                      rdnoise_key=rdnoise_key, exposure_key=exposure_key,
-                     save_calib_path=save_calib_path, calib_dir=calib_dir)
+                     calib_dir=calib_dir)
+
+    s = process_list(_check_ccddata, s)
 
     if combine_align_method in ['fft', 'wcs']:
         s = ccddata_shift_images(s, method=combine_align_method)
 
     if remove_cosmics:
         s = process_list(ccdproc.ccdproc.cosmicray_lacosmic, s)
+
+    if save_calib_path is not None and isinstance(sources[0],
+                                                  six.string_types):
+        mkdir_p(save_calib_path)
+        names = process_list(lambda x: os.path.join(save_calib_path,
+                                                    os.path.basename(x)),
+                             sources)
+        process_list(lambda x: ccdproc.save_fits(*x), zip(s, names))
+        files_saved = True
+    else:
+        files_saved = False
 
     if combine_method is not None:
         if combine_align_method is not None:
@@ -257,6 +264,9 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
                             sigma_clip_low_thresh=combine_sigma,
                             sigma_clip_high_thresh=combine_sigma,
                             mem_limit=mem_limit)
+
+    if return_filename and files_saved:
+        return names
 
     return s
 
@@ -472,7 +482,7 @@ def process_calib_photometry(image, identify_catalog_file=None,
                              montecarlo_percentage=0.2, filter=None,
                              solve_photometry_type=None, **kwargs):
     """Process photometry with magnitude calibration using catalogs."""
-    image = _check_ccddata
+    image = _check_ccddata(image)
 
     result = {'aperture': None, 'psf': None}
 
@@ -484,45 +494,34 @@ def process_calib_photometry(image, identify_catalog_file=None,
 
     ph = process_photometry(image, **photkwargs)
 
-    if ph['aperture'] is not None:
-            wcs = _solve_astrometry(image.header, ph['aperture'],
-                                    image.data.shape)
-    elif ph['psf'] is not None:
-            wcs = _solve_astrometry(image.header, ph['psf'],
-                                    image.data.shape)
-    else:
+    processed = [i for i in ['aperture', 'psf'] if ph[i] is not None]
+    if len(processed) == 0:
         raise ValueError('No photometry was processed!')
+    else:
+        wcs = _solve_astrometry(image.header, ph[processed[0]],
+                                image.data.shape,
+                                ra_key=kwargs['ra_key'],
+                                dec_key=kwargs['dec_key'],
+                                plate_scale=kwargs['plate_scale'])
+        ids = _identify_star(ph[processed[0]], wcs, filter=filter,
+                             identify_catalog_file=identify_catalog_file,
+                             identify_catalog_name=identify_catalog_name,
+                             identify_limit_angle=identify_limit_angle,
+                             science_catalog=science_catalog,
+                             science_id_key=science_id_key,
+                             science_ra_key=science_ra_key,
+                             science_dec_key=science_dec_key)
 
-    if ph['aperture'] is not None:
-        res = _solve_photometry(ph['aperture'], wcs,
-                                identify_catalog_file=identify_catalog_file,
-                                identify_catalog_name=identify_catalog_name,
-                                identify_limit_angle=identify_limit_angle,
-                                science_catalog=science_catalog,
-                                science_id_key=science_id_key,
-                                science_ra_key=science_ra_key,
-                                science_dec_key=science_dec_key,
+    for i in processed:
+        res = _solve_photometry(ph[i], wcs, ids['cat_mag'],
                                 montecarlo_iters=montecarlo_iters,
                                 montecarlo_percentage=montecarlo_percentage,
-                                filter=filter,
                                 solve_photometry_type=solve_photometry_type)
-        result['aperture'] = res
-
-    if ph['psf'] is not None:
-        res = _solve_photometry(ph['psf'], wcs,
-                                identify_catalog_file=identify_catalog_file,
-                                identify_catalog_name=identify_catalog_name,
-                                identify_limit_angle=identify_limit_angle,
-                                science_catalog=science_catalog,
-                                science_id_key=science_id_key,
-                                science_ra_key=science_ra_key,
-                                science_dec_key=science_dec_key,
-                                montecarlo_iters=montecarlo_iters,
-                                montecarlo_percentage=montecarlo_percentage,
-                                filter=filter,
-                                solve_photometry_type=solve_photometry_type)
-
-        result['psf'] = res
+        result[i] = copy.copy(ids)
+        for j in ph[i].colnames:
+            result[i][j] = ph[i][j]
+        for j in res.colnames:
+            result[i][j] = res[j]
 
     return result
 
@@ -721,12 +720,16 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
     for i in range(len(image_set)):
         if isinstance(image_set[i], ccdproc.CCDData):
             name = os.path.join(dtmp, "image{:02d}.fits".format(i))
-            image_set[i].write(name)
+            image_set[i].to_hdu()[0].writeto(name)
             logger.debug("image {} saved to {}".format(i, name))
             files.append(name)
         elif isinstance(image_set[i], six.string_types):
             files.append(os.path.join(save_calib_path,
                                       os.path.basename(image_set[i])))
+            try:
+                shutil.copy(image_set[i], files[-1])
+            except Exception:
+                pass
 
     script = pccd.create_script(result_dir=dtmp, image_list=files,
                                 star_name='object', apertures=r, r_ann=r_in,
@@ -828,12 +831,12 @@ class ReduceScript():
                 prod = copy.copy(default)
                 prod.update(v)
                 batch_key_replace(prod)
-                # try:
-                self.run(i, **prod)
-                # except Exception as e:
-                #    logger.warn('Problem in the process of {} product from'
-                #               ' {} file. Passing it.\n'.format(i, filename) +
-                #               'Error: {}'.format(e))
+                try:
+                    self.run(i, **prod)
+                except Exception as e:
+                    logger.warn('Problem in the process of {} product from'
+                                ' {} file. Passing it.\n'.format(i, filename) +
+                                'Error: {}'.format(e))
 
     def run(self, name, **config):
         """Run a single product. Config is the dictionary of needed
@@ -877,7 +880,64 @@ class PhotometryScript(ReduceScript):
 
     def run(self, name, **config):
         """Run this pipeline script"""
-        # TODO: finish this script
+        product_dir = config['product_dir']
+        s = [os.path.join(config['raw_dir'], i) for i in config['sources']]
+
+        calib_kwargs = {}
+        for i in ('master_bias', 'master_flat', 'dark_frame', 'badpixmask',
+                  'prebin', 'gain_key', 'gain', 'rdnoise_key',
+                  'combine_method', 'combine_sigma', 'exposure_key',
+                  'mem_limit', 'save_calib_path', 'combine_align_method',
+                  'calib_dir', 'product_dir', 'remove_cosmics'):
+            if i in config.keys():
+                calib_kwargs[i] = config[i]
+        ccd = calib_science(s, **calib_kwargs)
+
+        photkwargs = {}
+        for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
+                  'filter', 'plate_scale', 'photometry_type',
+                  'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
+                  'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
+                  'align_images', 'solve_photometry_type',
+                  'montecarlo_iters', 'montecarlo_percentage',
+                  'identify_catalog_file', 'identify_catalog_name',
+                  'identify_limit_angle', 'science_catalog', 'science_id_key',
+                  'science_ra_key', 'science_dec_key']:
+            if i in config.keys():
+                photkwargs[i] = config[i]
+
+        t = process_calib_photometry(ccd, **photkwargs)
+
+        hdus = []
+        for i in t.keys():
+            header_keys = ['solve_photometry_type', 'plate_scale']
+            if i == 'aperture':
+                header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
+                                'detect_snr']
+            elif i == 'psf':
+                header_keys += ['psf_model', 'box_size', 'psf_niters']
+
+            if config.get('solve_photometry_type', None) == 'montecarlo':
+                header_keys += ['montecarlo_iters', 'montecarlo_percentage']
+
+            if config.get('identify_catalog_name', None) is not None:
+                header_keys += ['identify_catalog_name',
+                                'identify_limit_angle']
+
+            hdu = fits.BinTableHDU(t[i], name="{}_photometry".format(i))
+            for k in header_keys:
+                if k in config.keys():
+                    v = config[k]
+                    key = 'hierarch astrojc {}'.format(k)
+                    if check_iterable(v):
+                        hdu.header[key] = ','.join([str(m) for m in v])
+                    else:
+                        hdu.header[key] = v
+            hdus.append(hdu)
+
+        hdulist = fits.HDUList([*ccd.to_hdu(wcs_relax=True), *hdus])
+        hdulist.writeto(os.path.join(product_dir,
+                                     "photometry_{}".format(name)))
 
 
 class PolarimetryScript(ReduceScript):
@@ -956,7 +1016,8 @@ class PolarimetryScript(ReduceScript):
         hdus = []
         hdus.append(fits.BinTableHDU(pccd[0], name='out_table'))
         hdus.append(fits.BinTableHDU(pccd[1], name='dat_table'))
-        hdulist = fits.HDUList([*hdus])
+        hdulist = fits.HDUList([fits.PrimaryHDU(header=image.header),
+                                *hdus])
         hdulist.writeto(os.path.join(product_dir,
                                      "polarimetry_pccdpack_{}".format(name)))
 
