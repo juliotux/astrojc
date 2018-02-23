@@ -4,6 +4,8 @@ import numpy as np
 from astropy.wcs import WCS
 from reproject import reproject_interp
 
+from ..logging import log as logger
+
 
 def create_fft_shift_list(image_list):
     """Use fft to calculate the shifts between images in a list.
@@ -85,6 +87,7 @@ def ccddata_shift_images(ccddata_list, method='fft'):
     """Calculate and apply shifts in a set of ccddata images.
     The function process the list inplace. Original data altered."""
     shifts = create_fft_shift_list([ccd.data for ccd in ccddata_list])
+    logger.info("Aligning CCDData with shifts: {}".format(shifts))
     for ccd, shift in zip(ccddata_list, shifts):
         ccd.data = apply_shift(ccd.data, shift, method=method)
 

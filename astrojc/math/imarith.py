@@ -5,6 +5,9 @@ from astropy.io import fits
 
 from ..logging import log as logger
 
+__all__ = ['check_hdu', 'extrema_clip', 'sigma_clip', 'minmax_clip',
+           'imcombine', 'imarith']
+
 imhdus = (fits.ImageHDU, fits.PrimaryHDU, fits.CompImageHDU,
           fits.StreamingHDU)
 
@@ -207,7 +210,12 @@ def imcombine(image_list, output_file=None, method='average', weights=None,
 
             combined[x:xend, y:yend] = _comb_funcs[method](data_list, axis=0)
 
-    return combined
+    hdu = fits.ImageHDU(combined, header=check_hdu(image_list[0]).header)
+    hdu.header['hierarch combined number'] = n_image
+    hdu.header['hierarch combined method'] = method
+    hdu.header['hierarch combined reject'] = reject
+
+    return hdu
 
 
 _arith_funcs = {'+': np.add,

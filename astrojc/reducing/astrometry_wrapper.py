@@ -42,7 +42,8 @@ class AstrometrySolver():
     specify to keep it with 'keep_files'.
     """
     def __init__(self, astrometry_command=shutil.which('solve-field'),
-                 defaults={'no-plot': None, 'overwrite': None},
+                 defaults={'no-plot': None, 'overwrite': None,
+                           'depth': "40,80,120"},
                  keep_files=False):
         self._command = astrometry_command
         self._defaults = defaults
@@ -214,6 +215,10 @@ class AstrometrySolver():
 
         try:
             log.info('runing: ' + str(args))
+            if stdout is None:
+                stdout = subprocess.PIPE
+            if stderr is None:
+                stderr = subprocess.PIPE
             subprocess.check_call(args, stdout=stdout, stderr=stderr)
 
             # .solved file must exist and contain a binary one

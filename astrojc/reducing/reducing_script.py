@@ -51,6 +51,7 @@ DEBUG = True
 
 if DEBUG:
     from matplotlib import pyplot as plt
+    failed = 'fail.log'
 
 # Important: this is the default keys of the configuration files!
 '''
@@ -408,6 +409,9 @@ def _solve_photometry(table, wcs=None, cat_mag=None,
                       solve_photometry_type=None):
     """Solve the absolute photometry of a field using a catalog."""
 
+    if DEBUG:
+        start = time.time()
+
     if solve_photometry_type == 'montecarlo':
         solver = solve_photometry_montecarlo
         solver_kwargs = {'n_iter': montecarlo_iters,
@@ -449,12 +453,18 @@ def _solve_photometry(table, wcs=None, cat_mag=None,
             mags['mag_r{}'.format(r)] = ma
             mags['mag_r{}_err'.format(r)] = err
 
+    if DEBUG:
+        end = time.time()
+        logger.debug("solving photometry took {} seconds".format(end-start))
+
     return mags
 
 
 def _solve_astrometry(header, table, shape, ra_key=None, dec_key=None,
                       plate_scale=None):
     """Solves the astrometry of a field and return a valid wcs."""
+    if DEBUG:
+        start = time.time()
     wcs = WCS(header, relax=True)
     if not wcs.wcs.ctype[0]:
         im_params = {}
@@ -470,6 +480,9 @@ def _solve_astrometry(header, table, shape, ra_key=None, dec_key=None,
         flux = table['flux']
         wcs = solve_astrometry_xy(x, y, flux, header, imw, imh,
                                   image_params=im_params, return_wcs=True)
+    if DEBUG:
+        end = time.time()
+        logger.debug("solving astrometry took {} seconds".format(end-start))
     return wcs
 
 
@@ -575,10 +588,10 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type,
         e = np.array([ph[j][f][pairs[idx]['e']] for j in range(len(ph))])
         oe = np.array([ph[j][fe][pairs[idx]['o']] for j in range(len(ph))])
         ee = np.array([ph[j][fe][pairs[idx]['e']] for j in range(len(ph))])
-        res, err, therr = calculate_polarimetry(o, e, pos,
-                                                retarder=retarder_type,
-                                                o_err=oe, e_err=ee)
-        for k in ['flux'] + list(res.keys()) + ['sigma_theor']:
+        # res, err, therr = calculate_polarimetry(o, e, pos,
+        #                                         retarder=retarder_type,
+        #                                         o_err=oe, e_err=ee)
+        for k in ['flux']:  # + list(res.keys()) + ['sigma_theor']:
             if k not in tmp.colnames:
                 tmp.add_column(Column(name=k, dtype='f8',
                                       length=len(pairs)))
@@ -587,13 +600,15 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type,
                                           dtype='f8',
                                           length=len(pairs)))
             if k == 'sigma_theor':
-                tmp[k][idx] = therr
+                # tmp[k][idx] = therr
+                0 == 0
             elif k == 'flux':
                 tmp[k][idx] = np.sum(o)+np.sum(e)
                 tmp['{}_error'.format(k)][idx] = np.sum(oe)+np.sum(ee)
             else:
-                tmp[k][idx] = res[k]
-                tmp['{}_error'.format(k)][idx] = err[k]
+                # tmp[k][idx] = res[k]
+                # tmp['{}_error'.format(k)][idx] = err[k]
+                0 == 0
 
     for i in range(len(pairs)):
         _process(idx=i)
@@ -837,6 +852,9 @@ class ReduceScript():
                     logger.warn('Problem in the process of {} product from'
                                 ' {} file. Passing it.\n'.format(i, filename) +
                                 'Error: {}'.format(e))
+                    if DEBUG:
+                        os.system("echo \"{:<32} {:<32} {}\" >> {}"
+                                  .format(filename, i, e, failed))
 
     def run(self, name, **config):
         """Run a single product. Config is the dictionary of needed
@@ -893,51 +911,51 @@ class PhotometryScript(ReduceScript):
                 calib_kwargs[i] = config[i]
         ccd = calib_science(s, **calib_kwargs)
 
-        photkwargs = {}
-        for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
-                  'filter', 'plate_scale', 'photometry_type',
-                  'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
-                  'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
-                  'align_images', 'solve_photometry_type',
-                  'montecarlo_iters', 'montecarlo_percentage',
-                  'identify_catalog_file', 'identify_catalog_name',
-                  'identify_limit_angle', 'science_catalog', 'science_id_key',
-                  'science_ra_key', 'science_dec_key']:
-            if i in config.keys():
-                photkwargs[i] = config[i]
-
-        t = process_calib_photometry(ccd, **photkwargs)
-
-        hdus = []
-        for i in t.keys():
-            header_keys = ['solve_photometry_type', 'plate_scale']
-            if i == 'aperture':
-                header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
-                                'detect_snr']
-            elif i == 'psf':
-                header_keys += ['psf_model', 'box_size', 'psf_niters']
-
-            if config.get('solve_photometry_type', None) == 'montecarlo':
-                header_keys += ['montecarlo_iters', 'montecarlo_percentage']
-
-            if config.get('identify_catalog_name', None) is not None:
-                header_keys += ['identify_catalog_name',
-                                'identify_limit_angle']
-
-            hdu = fits.BinTableHDU(t[i], name="{}_photometry".format(i))
-            for k in header_keys:
-                if k in config.keys():
-                    v = config[k]
-                    key = 'hierarch astrojc {}'.format(k)
-                    if check_iterable(v):
-                        hdu.header[key] = ','.join([str(m) for m in v])
-                    else:
-                        hdu.header[key] = v
-            hdus.append(hdu)
-
-        hdulist = fits.HDUList([*ccd.to_hdu(wcs_relax=True), *hdus])
-        hdulist.writeto(os.path.join(product_dir,
-                                     "photometry_{}".format(name)))
+        # photkwargs = {}
+        # for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
+        #           'filter', 'plate_scale', 'photometry_type',
+        #           'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
+        #           'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
+        #           'align_images', 'solve_photometry_type',
+        #           'montecarlo_iters', 'montecarlo_percentage',
+        #           'identify_catalog_file', 'identify_catalog_name',
+        #           'identify_limit_angle', 'science_catalog', 'science_id_key',
+        #           'science_ra_key', 'science_dec_key']:
+        #     if i in config.keys():
+        #         photkwargs[i] = config[i]
+        #
+        # t = process_calib_photometry(ccd, **photkwargs)
+        #
+        # hdus = []
+        # for i in t.keys():
+        #     header_keys = ['solve_photometry_type', 'plate_scale']
+        #     if i == 'aperture':
+        #         header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
+        #                         'detect_snr']
+        #     elif i == 'psf':
+        #         header_keys += ['psf_model', 'box_size', 'psf_niters']
+        #
+        #     if config.get('solve_photometry_type', None) == 'montecarlo':
+        #         header_keys += ['montecarlo_iters', 'montecarlo_percentage']
+        #
+        #     if config.get('identify_catalog_name', None) is not None:
+        #         header_keys += ['identify_catalog_name',
+        #                         'identify_limit_angle']
+        #
+        #     hdu = fits.BinTableHDU(t[i], name="{}_photometry".format(i))
+        #     for k in header_keys:
+        #         if k in config.keys():
+        #             v = config[k]
+        #             key = 'hierarch astrojc {}'.format(k)
+        #             if check_iterable(v):
+        #                 hdu.header[key] = ','.join([str(m) for m in v])
+        #             else:
+        #                 hdu.header[key] = v
+        #     hdus.append(hdu)
+        #
+        # hdulist = fits.HDUList([*ccd.to_hdu(wcs_relax=True), *hdus])
+        # hdulist.writeto(os.path.join(product_dir,
+        #                              "photometry_{}".format(name)))
 
 
 class PolarimetryScript(ReduceScript):
@@ -959,67 +977,67 @@ class PolarimetryScript(ReduceScript):
                 calib_kwargs[i] = config[i]
         ccds = calib_science(s, **calib_kwargs)
 
-        polkwargs = {}
-        for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
-                  'retarder_key', 'retarder_type', 'retarder_direction',
-                  'filter', 'plate_scale', 'photometry_type',
-                  'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
-                  'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
-                  'align_images', 'solve_photometry_type',
-                  'match_pairs_tolerance', 'montecarlo_iters',
-                  'montecarlo_percentage', 'identify_catalog_file',
-                  'identify_catalog_name', 'identify_limit_angle',
-                  'science_catalog', 'science_id_key', 'science_ra_key',
-                  'science_dec_key']:
-            if i in config.keys():
-                polkwargs[i] = config[i]
+        # polkwargs = {}
+        # for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
+        #           'retarder_key', 'retarder_type', 'retarder_direction',
+        #           'filter', 'plate_scale', 'photometry_type',
+        #           'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
+        #           'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
+        #           'align_images', 'solve_photometry_type',
+        #           'match_pairs_tolerance', 'montecarlo_iters',
+        #           'montecarlo_percentage', 'identify_catalog_file',
+        #           'identify_catalog_name', 'identify_limit_angle',
+        #           'science_catalog', 'science_id_key', 'science_ra_key',
+        #           'science_dec_key']:
+        #     if i in config.keys():
+        #         polkwargs[i] = config[i]
 
-        t = process_polarimetry(ccds, **polkwargs)
+        # t = process_polarimetry(ccds, **polkwargs)
+        #
+        # hdus = []
+        # for i in t.keys():
+        #     header_keys = ['retarder_type', 'retarder_rotation',
+        #                    'retarder_direction', 'align_images',
+        #                    'solve_photometry_type', 'plate_scale']
+        #     if i == 'aperture':
+        #         header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
+        #                         'detect_snr']
+        #     elif i == 'psf':
+        #         header_keys += ['psf_model', 'box_size', 'psf_niters']
+        #
+        #     if config.get('solve_photometry_type', None) == 'montecarlo':
+        #         header_keys += ['montecarlo_iters', 'montecarlo_percentage']
+        #
+        #     if config.get('identify_catalog_name', None) is not None:
+        #         header_keys += ['identify_catalog_name',
+        #                         'identify_limit_angle']
+        #
+        #     hdu = fits.BinTableHDU(t[i], name="{}_polarimetry".format(i))
+        #     for k in header_keys:
+        #         if k in config.keys():
+        #             v = config[k]
+        #             key = 'hierarch astrojc {}'.format(k)
+        #             if check_iterable(v):
+        #                 hdu.header[key] = ','.join([str(m) for m in v])
+        #             else:
+        #                 hdu.header[key] = v
+        #     hdus.append(hdu)
+        #
+        # image = ccdproc.combine(ccds, method='sum',
+        #                         mem_limit=config.get('mem_limit', _mem_limit))
+        #
+        # hdulist = fits.HDUList([*image.to_hdu(wcs_relax=True), *hdus])
+        # hdulist.writeto(os.path.join(product_dir,
+        #                              "polarimetry_astrojc_{}".format(name)))
 
-        hdus = []
-        for i in t.keys():
-            header_keys = ['retarder_type', 'retarder_rotation',
-                           'retarder_direction', 'align_images',
-                           'solve_photometry_type', 'plate_scale']
-            if i == 'aperture':
-                header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
-                                'detect_snr']
-            elif i == 'psf':
-                header_keys += ['psf_model', 'box_size', 'psf_niters']
-
-            if config.get('solve_photometry_type', None) == 'montecarlo':
-                header_keys += ['montecarlo_iters', 'montecarlo_percentage']
-
-            if config.get('identify_catalog_name', None) is not None:
-                header_keys += ['identify_catalog_name',
-                                'identify_limit_angle']
-
-            hdu = fits.BinTableHDU(t[i], name="{}_polarimetry".format(i))
-            for k in header_keys:
-                if k in config.keys():
-                    v = config[k]
-                    key = 'hierarch astrojc {}'.format(k)
-                    if check_iterable(v):
-                        hdu.header[key] = ','.join([str(m) for m in v])
-                    else:
-                        hdu.header[key] = v
-            hdus.append(hdu)
-
-        image = ccdproc.combine(ccds, method='sum',
-                                mem_limit=config.get('mem_limit', _mem_limit))
-
-        hdulist = fits.HDUList([*image.to_hdu(wcs_relax=True), *hdus])
-        hdulist.writeto(os.path.join(product_dir,
-                                     "polarimetry_astrojc_{}".format(name)))
-
-        pccd = run_pccdpack(ccds, **polkwargs)
-        hdus = []
-        hdus.append(fits.BinTableHDU(pccd[0], name='out_table'))
-        hdus.append(fits.BinTableHDU(pccd[1], name='dat_table'))
-        hdulist = fits.HDUList([fits.PrimaryHDU(header=image.header),
-                                *hdus])
-        hdulist.writeto(os.path.join(product_dir,
-                                     "polarimetry_pccdpack_{}".format(name)))
+        # pccd = run_pccdpack(ccds, **polkwargs)
+        # hdus = []
+        # hdus.append(fits.BinTableHDU(pccd[0], name='out_table'))
+        # hdus.append(fits.BinTableHDU(pccd[1], name='dat_table'))
+        # hdulist = fits.HDUList([fits.PrimaryHDU(header=image.header),
+        #                         *hdus])
+        # hdulist.writeto(os.path.join(product_dir,
+        #                              "polarimetry_pccdpack_{}".format(name)))
 
 
 class MasterReduceScript(ReduceScript):
@@ -1030,9 +1048,13 @@ class MasterReduceScript(ReduceScript):
         if 'sources' in config.keys() and 'source_ls_pattern' in config.keys():
             logger.warn('sources and sources_ls_pattern given. Using sources.')
         elif 'sources_ls_pattern' in config.keys():
-            fs = glob.glob(os.path.join(config['raw_dir'],
-                                        config['sources_ls_pattern']))
+            ls_pat = os.path.join(config['raw_dir'],
+                                  config['sources_ls_pattern'])
+            fs = glob.glob(ls_pat)
             config['sources'] = [os.path.basename(i) for i in sorted(fs)]
+            if len(config['sources']) == 0:
+                raise FileNotFoundError("Could not determine sources."
+                                        " glob pattern: {}".format(ls_pat))
 
         config['sources'] = [i for i in config['sources']
                              if i not in config['exclude_images']]
