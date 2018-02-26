@@ -15,16 +15,11 @@ from astropy.wcs import WCS
 from astropy import units
 
 from ..logging import log
+from ..math.opd_utils import solve_decimal
 
 
 __all__ = ['AstrometrySolver', 'solve_astrometry_xy', 'solve_astrometry_image',
            'create_xyls', 'wcs_xy2radec', 'wcs_radec2xy']
-
-
-def solve_decimal(string):
-    """Resolve problems with ',' decimal separator"""
-    decmark = re.compile('(?<=\d),(?=\d)')
-    return decmark.sub('.', str(string))
 
 
 class AstrometryNetUnsolvedField(subprocess.CalledProcessError):

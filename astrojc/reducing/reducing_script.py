@@ -34,9 +34,8 @@ except ModuleNotFoundError:
     use_sep = False
     logger.warn('SEP not found, ignoring it')
 
-from . import ccdproc_wrapper as ccdproc
-from .ccdproc_wrapper import check_ccddata as _check_ccddata
 from .image_shifts import ccddata_shift_images
+from .image_processing import process_image, check_hdu, combine
 from .catalog_wrapper import (Catalog, solve_photometry_montecarlo,
                               solve_photometry_median,
                               solve_photometry_average)
@@ -131,37 +130,65 @@ mem_limit               # maximum memory limit
 _mem_limit = 1e9
 
 
+def _calib_image(image, product_dir=None, master_bias=None, master_flat=None,
+                 dark_frame=None, badpixmask=None, prebin=None, gain=None,
+                 gain_key='GAIN', rdnoise_key='RDNOISE', exposure_key=None,
+                 calib_dir=None, remove_cosmics=True,
+                 bias_check_keys=[], flat_check_keys=[],
+                 dark_check_keys=[]):
+    """Calib one single science image with calibration frames."""
+    image = check_hdu(image)
+
+    kwargs = {'rebin_size': prebin,
+              'gain_key': gain_key,
+              'gain': gain,
+              'readnoise_key': rdnoise_key,
+              'exposure_key': exposure_key,
+              'lacosmic': remove_cosmics,
+              'bias_check_keys': bias_check_keys,
+              'flat_check_keys': flat_check_keys,
+              'dark_check_keys': dark_check_keys}
+
+    if master_bias:
+        master_bias = os.path.join(calib_dir, master_bias)
+        kwargs['master_bias'] = master_bias
+    if master_flat:
+        master_flat = os.path.join(calib_dir, master_flat)
+        kwargs['master_flat'] = master_flat
+    if dark_frame:
+        dark_frame = os.path.join(calib_dir, dark_frame)
+        kwargs['dark_frame'] = dark_frame
+    if badpixmask:
+        badpixmask = os.path.join(calib_dir, badpixmask)
+
+    image = process_image(image, **kwargs)
+
+    return image
+
+
 def create_calib(sources, result_file=None, calib_type=None, master_bias=None,
                  master_flat=None, dark_frame=None, badpixmask=None,
                  prebin=None, gain_key=None, rdnoise_key=None, gain=None,
                  combine_method='median', combine_sigma=None,
-                 combine_align_method=None,
-                 exposure_key=None, mem_limit=_mem_limit, calib_dir=None):
+                 combine_align_method=None, remove_cosmics=False,
+                 exposure_key=None, mem_limit=_mem_limit, calib_dir=None,
+                 bias_check_keys=[], flat_check_keys=[],
+                 dark_check_keys=[]):
     """Create calibration frames."""
-    s = process_list(_check_ccddata, sources)
-
-    if prebin is not None:
-        s = process_list(ccdproc.ccdproc.block_reduce, s, prebin,
-                         func=np.sum)
-        if rdnoise_key is not None:
-            def set_rdnoise(f, key, binning):
-                f.header[key] = float(f.header[key])*binning
-                return f
-            s = process_list(set_rdnoise, s, rdnoise_key, prebin)
-
-    if master_bias is not None:
-            master_bias = os.path.join(calib_dir, master_bias)
-    if master_flat is not None:
-            master_flat = os.path.join(calib_dir, master_flat)
-
-    s = process_list(ccdproc.process_image, s, master_bias=master_bias,
-                     master_flat=master_flat, gain=gain, gain_key=gain_key,
-                     readnoise_key=rdnoise_key, exposure_key=exposure_key)
+    s = process_list(_calib_image, sources, master_bias=master_bias,
+                     master_flat=master_flat, dark_frame=dark_frame,
+                     badpixmask=badpixmask, prebin=prebin, gain_key=gain_key,
+                     rdnoise_key=rdnoise_key, gain=gain,
+                     exposure_key=exposure_key, remove_cosmics=remove_cosmics,
+                     calib_dir=calib_dir,
+                     bias_check_keys=bias_check_keys,
+                     flat_check_keys=flat_check_keys,
+                     dark_check_keys=dark_check_keys)
 
     if combine_sigma is not None:
-        sig_clip = True
+        reject = 'sigmaclip'
     else:
-        sig_clip = False
+        reject = []
 
     if calib_type == 'flat':
         def scaling_func(arr):
@@ -175,50 +202,19 @@ def create_calib(sources, result_file=None, calib_type=None, master_bias=None,
     if combine_align_method in ['fft', 'wcs']:
         s = ccddata_shift_images(s, combine_align_method)
 
-    res = ccdproc.combine(s, output_file=result_file,
-                          method=combine_method, sigma_clip=sig_clip,
-                          sigma_clip_low_thresh=combine_sigma,
-                          sigma_clip_high_thresh=combine_sigma,
-                          mem_limit=mem_limit, scale=scaling_func)
+    res = combine(s, output_file=result_file, method=combine_method,
+                  reject=reject, sigma_clip_low=combine_sigma,
+                  sigma_clip_high=combine_sigma, mem_limit=mem_limit,
+                  scale=scaling_func)
 
     if badpixmask is not None and calib_type == 'flat':
         badpix = np.logical_or(res.data <= 0.2, res.data >= 10).astype('uint8')
-        badpix = ccdproc.CCDData(badpix, unit='')
+        badpix = check_hdu(badpix)
         if calib_dir is not None:
             badpixmask = os.path.join(calib_dir, badpixmask)
-        badpix.write(badpixmask)
+        badpix.writeto(badpixmask)
 
     return res
-
-
-def _calib_image(image, product_dir=None, master_bias=None, master_flat=None,
-                 dark_frame=None, badpixmask=None, prebin=None, gain=None,
-                 gain_key='GAIN', rdnoise_key='RDNOISE', exposure_key=None,
-                 calib_dir=None):
-    """Calib one single science image with calibration frames."""
-    image = _check_ccddata(image)
-
-    if prebin is not None:
-        image = ccdproc.ccdproc.block_reduce(image, prebin)
-        if rdnoise_key is not None:
-            image.header[rdnoise_key] = float(image.header[rdnoise_key])*prebin
-
-    if master_bias:
-        master_bias = os.path.join(calib_dir, master_bias)
-    if master_flat:
-        master_flat = os.path.join(calib_dir, master_flat)
-    if dark_frame:
-        dark_frame = os.path.join(calib_dir, dark_frame)
-    if badpixmask:
-        badpixmask = os.path.join(calib_dir, badpixmask)
-
-    image = ccdproc.process_image(image, master_bias=master_bias,
-                                  master_flat=master_flat, gain=gain,
-                                  gain_key=gain_key, readnoise_key=rdnoise_key,
-                                  exposure_key=exposure_key,
-                                  badpixmask=badpixmask)
-
-    return image
 
 
 def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
@@ -227,21 +223,22 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
                   combine_sigma=None, exposure_key=None, mem_limit=_mem_limit,
                   product_dir=None, combine_align_method=None, calib_dir=None,
                   save_calib_path=None, remove_cosmics=True,
-                  return_filename=False):
+                  return_filename=False, bias_check_keys=[],
+                  flat_check_keys=[], dark_check_keys=[]):
     """Calib science images with gain, flat, bias and binning."""
     s = process_list(_calib_image, sources, master_bias=master_bias,
                      master_flat=master_flat, dark_frame=dark_frame,
                      badpixmask=badpixmask, prebin=prebin, gain=gain,
                      rdnoise_key=rdnoise_key, exposure_key=exposure_key,
-                     calib_dir=calib_dir)
+                     calib_dir=calib_dir, remove_cosmics=remove_cosmics,
+                     bias_check_keys=bias_check_keys,
+                     flat_check_keys=flat_check_keys,
+                     dark_check_keys=dark_check_keys)
 
-    s = process_list(_check_ccddata, s)
+    s = process_list(check_hdu, s)
 
     if combine_align_method in ['fft', 'wcs']:
         s = ccddata_shift_images(s, method=combine_align_method)
-
-    if remove_cosmics:
-        s = process_list(ccdproc.ccdproc.cosmicray_lacosmic, s)
 
     if save_calib_path is not None and isinstance(sources[0],
                                                   six.string_types):
@@ -249,7 +246,9 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
         names = process_list(lambda x: os.path.join(save_calib_path,
                                                     os.path.basename(x)),
                              sources)
-        process_list(lambda x: ccdproc.save_fits(*x), zip(s, names))
+        process_list(lambda x: fits.writeto(*x), zip(names,
+                                                     [i.data for i in s],
+                                                     [i.header for i in s]))
         files_saved = True
     else:
         files_saved = False
@@ -258,13 +257,13 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
         if combine_align_method is not None:
             s = ccddata_shift_images(s, combine_align_method)
         if combine_sigma is not None:
-            sig_clip = True
+            reject = ['sigmaclip']
         else:
-            sig_clip = False
-        s = ccdproc.combine(s, method=combine_method, sigma_clip=sig_clip,
-                            sigma_clip_low_thresh=combine_sigma,
-                            sigma_clip_high_thresh=combine_sigma,
-                            mem_limit=mem_limit)
+            reject = []
+        s = combine(s, method=combine_method, reject=reject,
+                    sigma_clip_low=combine_sigma,
+                    sigma_clip_high=combine_sigma,
+                    mem_limit=mem_limit)
 
     if return_filename and files_saved:
         return names
@@ -336,7 +335,7 @@ def process_photometry(image, photometry_type, detect_fwhm=None,
                        r_out=60, r_find_best=True, psf_model='gaussian',
                        psf_niters=1, x=None, y=None):
     """Process standart photometry in one image, without calibrations."""
-    image = _check_ccddata(image)
+    image = check_hdu(image)
     data = image.data
     result = {'aperture': None,
               'psf': None}
@@ -495,7 +494,7 @@ def process_calib_photometry(image, identify_catalog_file=None,
                              montecarlo_percentage=0.2, filter=None,
                              solve_photometry_type=None, **kwargs):
     """Process photometry with magnitude calibration using catalogs."""
-    image = _check_ccddata(image)
+    image = check_hdu(image)
 
     result = {'aperture': None, 'psf': None}
 
@@ -625,7 +624,7 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
     kwargs are the arguments for the following functions:
     process_photometry, _solve_photometry
     """
-    s = process_list(_check_ccddata, image_set)
+    s = process_list(check_hdu, image_set)
     result = {'aperture': None, 'psf': None}
 
     sources = _do_aperture(np.sum([i.data for i in s], axis=0),
@@ -732,19 +731,21 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
                  **kwargs):
     files = []
     dtmp = mkdtemp(prefix='pccdpack')
+
     for i in range(len(image_set)):
-        if isinstance(image_set[i], ccdproc.CCDData):
-            name = os.path.join(dtmp, "image{:02d}.fits".format(i))
-            image_set[i].to_hdu()[0].writeto(name)
-            logger.debug("image {} saved to {}".format(i, name))
-            files.append(name)
-        elif isinstance(image_set[i], six.string_types):
-            files.append(os.path.join(save_calib_path,
+        if isinstance(image_set[i], six.string_types):
+            files.append(os.path.join(dtmp,
                                       os.path.basename(image_set[i])))
             try:
                 shutil.copy(image_set[i], files[-1])
             except Exception:
                 pass
+        else:
+            name = os.path.join(dtmp, "image{:02d}.fits".format(i))
+            im = check_hdu(image_set[i])
+            im.writeto(name)
+            logger.debug("image {} saved to {}".format(i, name))
+            files.append(name)
 
     script = pccd.create_script(result_dir=dtmp, image_list=files,
                                 star_name='object', apertures=r, r_ann=r_in,
@@ -766,7 +767,7 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
     log_table = pccd.read_log(os.path.join(dtmp, 'object.log'))
 
     x, y = out_table['X0'], out_table['Y0']
-    data = ccdproc.check_ccddata(files[0])
+    data = check_hdu(files[0])
     ft = _do_aperture(data.data, x=x, y=y, r=5)
     astkwargs = {}
     for i in ['ra_key', 'dec_key', 'plate_scale']:
@@ -790,7 +791,7 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
 
 
 class ReduceScript():
-    """Simple class to process pipeline scripts qith configuration files."""
+    """Simple class to process pipeline scripts with configuration files."""
     # TODO: introduce parameters checking
     def __init__(self, config=None):
         """Dummy entry for the class"""
@@ -849,9 +850,9 @@ class ReduceScript():
                 try:
                     self.run(i, **prod)
                 except Exception as e:
-                    logger.warn('Problem in the process of {} product from'
-                                ' {} file. Passing it.\n'.format(i, filename) +
-                                'Error: {}'.format(e))
+                    logger.error('Problem in the process of {} product from'
+                                 ' {} file. Passing it.'.format(i, filename) +
+                                 '\nError: {}'.format(e))
                     if DEBUG:
                         os.system("echo \"{:<32} {:<32} {}\" >> {}"
                                   .format(filename, i, e, failed))
@@ -879,7 +880,8 @@ class CalibScript(ReduceScript):
         for i in ['calib_type', 'master_bias', 'master_flat', 'dark_frame',
                   'badpixmask', 'prebin', 'gain_key', 'rdnoise_key', 'gain',
                   'combine_method', 'combine_sigma', 'exposure_key',
-                  'mem_limit', 'calib_dir']:
+                  'mem_limit', 'calib_dir',
+                  'bias_check_keys', 'flat_check_keys', 'dark_check_keys']:
             if i in config.keys():
                 calib_kwargs[i] = config[i]
 
@@ -906,56 +908,57 @@ class PhotometryScript(ReduceScript):
                   'prebin', 'gain_key', 'gain', 'rdnoise_key',
                   'combine_method', 'combine_sigma', 'exposure_key',
                   'mem_limit', 'save_calib_path', 'combine_align_method',
-                  'calib_dir', 'product_dir', 'remove_cosmics'):
+                  'calib_dir', 'product_dir', 'remove_cosmics',
+                  'bias_check_keys', 'flat_check_keys', 'dark_check_keys'):
             if i in config.keys():
                 calib_kwargs[i] = config[i]
         ccd = calib_science(s, **calib_kwargs)
 
-        # photkwargs = {}
-        # for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
-        #           'filter', 'plate_scale', 'photometry_type',
-        #           'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
-        #           'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
-        #           'align_images', 'solve_photometry_type',
-        #           'montecarlo_iters', 'montecarlo_percentage',
-        #           'identify_catalog_file', 'identify_catalog_name',
-        #           'identify_limit_angle', 'science_catalog', 'science_id_key',
-        #           'science_ra_key', 'science_dec_key']:
-        #     if i in config.keys():
-        #         photkwargs[i] = config[i]
-        #
-        # t = process_calib_photometry(ccd, **photkwargs)
-        #
-        # hdus = []
-        # for i in t.keys():
-        #     header_keys = ['solve_photometry_type', 'plate_scale']
-        #     if i == 'aperture':
-        #         header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
-        #                         'detect_snr']
-        #     elif i == 'psf':
-        #         header_keys += ['psf_model', 'box_size', 'psf_niters']
-        #
-        #     if config.get('solve_photometry_type', None) == 'montecarlo':
-        #         header_keys += ['montecarlo_iters', 'montecarlo_percentage']
-        #
-        #     if config.get('identify_catalog_name', None) is not None:
-        #         header_keys += ['identify_catalog_name',
-        #                         'identify_limit_angle']
-        #
-        #     hdu = fits.BinTableHDU(t[i], name="{}_photometry".format(i))
-        #     for k in header_keys:
-        #         if k in config.keys():
-        #             v = config[k]
-        #             key = 'hierarch astrojc {}'.format(k)
-        #             if check_iterable(v):
-        #                 hdu.header[key] = ','.join([str(m) for m in v])
-        #             else:
-        #                 hdu.header[key] = v
-        #     hdus.append(hdu)
-        #
-        # hdulist = fits.HDUList([*ccd.to_hdu(wcs_relax=True), *hdus])
-        # hdulist.writeto(os.path.join(product_dir,
-        #                              "photometry_{}".format(name)))
+        photkwargs = {}
+        for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
+                  'filter', 'plate_scale', 'photometry_type',
+                  'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
+                  'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
+                  'align_images', 'solve_photometry_type',
+                  'montecarlo_iters', 'montecarlo_percentage',
+                  'identify_catalog_file', 'identify_catalog_name',
+                  'identify_limit_angle', 'science_catalog', 'science_id_key',
+                  'science_ra_key', 'science_dec_key']:
+            if i in config.keys():
+                photkwargs[i] = config[i]
+
+        t = process_calib_photometry(ccd, **photkwargs)
+
+        hdus = []
+        for i in t.keys():
+            header_keys = ['solve_photometry_type', 'plate_scale']
+            if i == 'aperture':
+                header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
+                                'detect_snr']
+            elif i == 'psf':
+                header_keys += ['psf_model', 'box_size', 'psf_niters']
+
+            if config.get('solve_photometry_type', None) == 'montecarlo':
+                header_keys += ['montecarlo_iters', 'montecarlo_percentage']
+
+            if config.get('identify_catalog_name', None) is not None:
+                header_keys += ['identify_catalog_name',
+                                'identify_limit_angle']
+
+            hdu = fits.BinTableHDU(t[i], name="{}_photometry".format(i))
+            for k in header_keys:
+                if k in config.keys():
+                    v = config[k]
+                    key = 'hierarch astrojc {}'.format(k)
+                    if check_iterable(v):
+                        hdu.header[key] = ','.join([str(m) for m in v])
+                    else:
+                        hdu.header[key] = v
+            hdus.append(hdu)
+
+        hdulist = fits.HDUList([*ccd.to_hdu(wcs_relax=True), *hdus])
+        hdulist.writeto(os.path.join(product_dir,
+                                     "photometry_{}".format(name)))
 
 
 class PolarimetryScript(ReduceScript):
@@ -977,58 +980,58 @@ class PolarimetryScript(ReduceScript):
                 calib_kwargs[i] = config[i]
         ccds = calib_science(s, **calib_kwargs)
 
-        # polkwargs = {}
-        # for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
-        #           'retarder_key', 'retarder_type', 'retarder_direction',
-        #           'filter', 'plate_scale', 'photometry_type',
-        #           'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
-        #           'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
-        #           'align_images', 'solve_photometry_type',
-        #           'match_pairs_tolerance', 'montecarlo_iters',
-        #           'montecarlo_percentage', 'identify_catalog_file',
-        #           'identify_catalog_name', 'identify_limit_angle',
-        #           'science_catalog', 'science_id_key', 'science_ra_key',
-        #           'science_dec_key']:
-        #     if i in config.keys():
-        #         polkwargs[i] = config[i]
+        polkwargs = {}
+        for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
+                  'retarder_key', 'retarder_type', 'retarder_direction',
+                  'filter', 'plate_scale', 'photometry_type',
+                  'psf_model', 'r', 'r_in', 'r_out', 'psf_niters',
+                  'box_size', 'detect_fwhm', 'detect_snr', 'remove_cosmics',
+                  'align_images', 'solve_photometry_type',
+                  'match_pairs_tolerance', 'montecarlo_iters',
+                  'montecarlo_percentage', 'identify_catalog_file',
+                  'identify_catalog_name', 'identify_limit_angle',
+                  'science_catalog', 'science_id_key', 'science_ra_key',
+                  'science_dec_key']:
+            if i in config.keys():
+                polkwargs[i] = config[i]
 
-        # t = process_polarimetry(ccds, **polkwargs)
-        #
-        # hdus = []
-        # for i in t.keys():
-        #     header_keys = ['retarder_type', 'retarder_rotation',
-        #                    'retarder_direction', 'align_images',
-        #                    'solve_photometry_type', 'plate_scale']
-        #     if i == 'aperture':
-        #         header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
-        #                         'detect_snr']
-        #     elif i == 'psf':
-        #         header_keys += ['psf_model', 'box_size', 'psf_niters']
-        #
-        #     if config.get('solve_photometry_type', None) == 'montecarlo':
-        #         header_keys += ['montecarlo_iters', 'montecarlo_percentage']
-        #
-        #     if config.get('identify_catalog_name', None) is not None:
-        #         header_keys += ['identify_catalog_name',
-        #                         'identify_limit_angle']
-        #
-        #     hdu = fits.BinTableHDU(t[i], name="{}_polarimetry".format(i))
-        #     for k in header_keys:
-        #         if k in config.keys():
-        #             v = config[k]
-        #             key = 'hierarch astrojc {}'.format(k)
-        #             if check_iterable(v):
-        #                 hdu.header[key] = ','.join([str(m) for m in v])
-        #             else:
-        #                 hdu.header[key] = v
-        #     hdus.append(hdu)
-        #
-        # image = ccdproc.combine(ccds, method='sum',
-        #                         mem_limit=config.get('mem_limit', _mem_limit))
-        #
-        # hdulist = fits.HDUList([*image.to_hdu(wcs_relax=True), *hdus])
-        # hdulist.writeto(os.path.join(product_dir,
-        #                              "polarimetry_astrojc_{}".format(name)))
+        t = process_polarimetry(ccds, **polkwargs)
+
+        hdus = []
+        for i in t.keys():
+            header_keys = ['retarder_type', 'retarder_rotation',
+                           'retarder_direction', 'align_images',
+                           'solve_photometry_type', 'plate_scale']
+            if i == 'aperture':
+                header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
+                                'detect_snr']
+            elif i == 'psf':
+                header_keys += ['psf_model', 'box_size', 'psf_niters']
+
+            if config.get('solve_photometry_type', None) == 'montecarlo':
+                header_keys += ['montecarlo_iters', 'montecarlo_percentage']
+
+            if config.get('identify_catalog_name', None) is not None:
+                header_keys += ['identify_catalog_name',
+                                'identify_limit_angle']
+
+            hdu = fits.BinTableHDU(t[i], name="{}_polarimetry".format(i))
+            for k in header_keys:
+                if k in config.keys():
+                    v = config[k]
+                    key = 'hierarch astrojc {}'.format(k)
+                    if check_iterable(v):
+                        hdu.header[key] = ','.join([str(m) for m in v])
+                    else:
+                        hdu.header[key] = v
+            hdus.append(hdu)
+
+        image = combine(ccds, method='sum', mem_limit=config.get('mem_limit',
+                                                                 _mem_limit))
+
+        hdulist = fits.HDUList([image, *hdus])
+        hdulist.writeto(os.path.join(product_dir,
+                                     "polarimetry_astrojc_{}".format(name)))
 
         # pccd = run_pccdpack(ccds, **polkwargs)
         # hdus = []

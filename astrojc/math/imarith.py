@@ -12,6 +12,34 @@ imhdus = (fits.ImageHDU, fits.PrimaryHDU, fits.CompImageHDU,
           fits.StreamingHDU)
 
 
+class IncompatibleHeadersError(ValueError):
+    """When 2 image header are not compatible"""
+
+
+def check_header_keys(image1, image2, keywords=[]):
+    """Compare some header keys from 2 images and check if the have equal
+    values."""
+    image1 = check_hdu(image1)
+    image2 = check_hdu(image2)
+    for i in keywords:
+        if i in image1.header.keys():
+            if i in image2.header.keys():
+                v1 = image1.header[i]
+                v2 = image2.header[i]
+                if v1 != v2:
+                    raise IncompatibleHeadersError('Keyword {} have different '
+                                                   'values for images 1 and 2:'
+                                                   '\n{}\n{}'.format(i,
+                                                                     v1, v2))
+            else:
+                raise IncompatibleHeadersError('Image 2 do not have Keyword {}'
+                                               .format(i))
+        else:
+            raise IncompatibleHeadersError('Image 1 do not have Keyword {}'
+                                           .format(i))
+    return True
+
+
 def check_hdu(data):
     """Check if a data is a valid ImageHDU type and convert it."""
     if not isinstance(data, imhdus):
@@ -20,7 +48,7 @@ def check_hdu(data):
         elif isinstance(data, six.string_types):
             data = fits.open(data)[0]
         elif isinstance(data, np.ndarray):
-            data = fits.ImageHDU(data)
+            data = fits.PrimaryHDU(data)
         else:
             raise ValueError('The given data is not a valid CCDData type.')
     return data
@@ -206,14 +234,22 @@ def imcombine(image_list, output_file=None, method='average', weights=None,
                 mask = mask | sigma_clip(data_list, sigma_clip_low,
                                          sigma_clip_high, axis=0)
 
-            data_list[np.where(mask)] = np.nan
+            # TODO: make it less dumb
+            try:
+                data_list[np.where(mask)] = np.nan
+            except Exception:
+                pass
 
             combined[x:xend, y:yend] = _comb_funcs[method](data_list, axis=0)
 
-    hdu = fits.ImageHDU(combined, header=check_hdu(image_list[0]).header)
+    hdu = fits.PrimaryHDU(combined, header=check_hdu(image_list[0]).header)
     hdu.header['hierarch combined number'] = n_image
     hdu.header['hierarch combined method'] = method
-    hdu.header['hierarch combined reject'] = reject
+    hdu.header['hierarch combined reject'] = ','.join(reject)
+
+    if output_file is not None:
+        logger.info('Combined image saved at {}'.format(output_file))
+        hdu.writeto(output_file)
 
     return hdu
 
@@ -233,6 +269,8 @@ def imarith(operand1, operand2, operation, inplace=False):
 
     Keeps the header of the first image.
     """
+    logger.debug('Operation {} between {} and {}'.format(operation, operand1,
+                                                         operand2))
     if not isinstance(operand1, imhdus) and not isinstance(operand2, imhdus):
         raise ValueError("Both operand1 and operand2 are not valid "
                          "fits images.")
@@ -241,24 +279,30 @@ def imarith(operand1, operand2, operation, inplace=False):
         raise ValueError("Operation {} not supported.".format(operation))
 
     nhdu = None
-    if isinstance(operand1, imhdus):
-        data1 = operand1.data
+    try:
+        hdu = check_hdu(operand1)
+        data1 = hdu.data
         if inplace:
-            nhdu = operand1
+            nhdu = hdu
         else:
-            nhdu = copy.copy(operand1)
-    else:
+            nhdu = fits.PrimaryHDU(hdu.data, hdu.header)
+    except ValueError:
         data1 = operand1
 
-    if isinstance(operand2, imhdus):
-        data2 = operand2.data
+    try:
+        hdu = check_hdu(operand2)
+        data2 = hdu.data
         if inplace and nhdu is None:
-            nhdu = operand2
+            nhdu = hdu
         elif nhdu is None:
-            nhdu = copy.copy(operand2)
-    else:
+            nhdu = fits.PrimaryHDU(hdu.data, hdu.header)
+    except ValueError:
         data2 = operand2
 
-    nhdu.data = _arith_funcs[operation](data1, data2)
+    try:
+        nhdu.data = _arith_funcs[operation](data1, data2)
+    except Exception as e:
+        raise ValueError('Could not process the operation {} between {} and {}'
+                         .format(operation, data1, data2))
 
     return nhdu
