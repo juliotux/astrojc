@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.spatial import cKDTree
-from astropy.modeling.fitting import LevMarLSQFitter
+from astropy.modeling.fitting import LevMarLSQFitter, LinearLSQFitter
+from astropy.modeling.functional_models import Const1D
 
 from ..logging import log as logger
 from ..math.polarimetry_models import HalfWaveModel, QuarterWaveModel
@@ -54,8 +55,10 @@ def match_pairs(x, y, dx, dy, tolerance=1.0):
     return results[:npairs]
 
 
-def estimate_normalize(o, e, positions, n_consecutive):
-    """Estimate the normalization of a given set of data."""
+def __trashed_estimate_normalize(o, e, positions, n_consecutive):
+    """Estimate the normalization of a given set of data.
+    Trashed, do not use!
+    """
     data_o = [[]]*n_consecutive
     data_e = [[]]*n_consecutive
 
@@ -83,57 +86,63 @@ def estimate_normalize(o, e, positions, n_consecutive):
     return k
 
 
-def calculate_polarimetry(o, e, positions, rotation_interval, z=None,
+def estimate_normalize(o, e, positions):
+    """Estimate the normalization of a given set of data."""
+    # We can estimate the k fitting a constant function to the data!
+    # y(phi) = k = e(phi)/o(phi)
+    fitter = LinearLSQFitter()
+    fit = fitter(Const1D(), positions, e/o)
+
+    return fit.parameters[0]
+
+
+def calculate_polarimetry(o, e, positions, rotation_interval,
                           retarder='half', o_err=None, e_err=None):
     """Calculate the polarimetry."""
-    # if o_err is None or e_err is None:
-    #     do_th_error = False
-    # else:
-    #     # temporary, not compute theoretical error
-    #     do_th_error = False
-    #
-    # if retarder == 'half':
-    #     model = HalfWaveModel()
-    #     n_consecutive = 4
-    # elif retarder == 'quarter':
-    #     model = QuarterWaveModel()
-    #     n_consecutive = 8
-    # else:
-    #     raise ValueError('retarder {} not supported.'.format(retarder))
-    #
-    # if z is None:
-    #     k = estimate_normalize(o, e, positions, n_consecutive)
-    #     z = (np.array(o)-np.array(e)*k)/(np.array(o)+np.array(e)*k)
-    # psi = np.array(positions)*rotation_interval
-    #
-    # fitter = LevMarLSQFitter()
-    # m_fitted = fitter(model, psi, z)
-    #
-    # return m_fitted
 
-    # result = OrderedDict()
-    # errors = OrderedDict()
-    # try:
-    #     popt, pcov = curve_fit(func, psi, z)
-    #     for i in range(len(args)):
-    #         result[args[i]] = popt[i]
-    #         errors[args[i]] = np.sqrt(np.diag(pcov))[i]
-    # except RuntimeError:
-    #     for i in args:
-    #         result[i] = np.nan
-    #         errors[i] = np.nan
-    #
-    # result['p'] = np.sqrt(result['q']**2 + result['u']**2)
-    # errors['p'] = errors['q'] + errors['u']
-    #
-    # result['theta'] = np.arctan(result['q']/result['u'])
-    # errors['theta'] = np.nan  # read references about this calculation
-    #
-    # if do_th_error:
-    #     raise NotImplementedError('Implement the theoretical error of'
-    #                               ' polarimetry.')
-    # else:
-    #     th_error = 0.0
+    if retarder == 'half':
+        model = HalfWaveModel()
+    elif retarder == 'quarter':
+        model = QuarterWaveModel()
+    else:
+        raise ValueError('retarder {} not supported.'.format(retarder))
 
-    # TODO: transform errors in sigma like pccdpack
-    # return result, errors, th_error
+    o = np.array(o)
+    e = np.array(e)
+    positions = np.array(positions)
+
+    k = estimate_normalize(o, e, positions)
+    z = (o-(e*k))/(o+(e*k))
+    psi = positions*rotation_interval
+    if o_err is None or e_err is None:
+        z_erro = np.ones(len(positions))
+        th_error = None
+    else:
+        # Assuming individual z errors from propagation
+        o_err = np.array(o_err)
+        e_err = np.array(e_err)
+        oi = 2*o/((o+e)**2)
+        ei = -2*e/((o+e)**2)
+        z_erro = np.sqrt((oi**2)*(o_err**2) + ((ei**2)*(e_err**2)))
+        # Theor_sigma will be the sum of z errors over the sqrt of pos
+        th_error = np.sum(z_erro)/np.sqrt(len(positions))
+
+    fitter = LevMarLSQFitter()
+    m_fitted = fitter(model, psi, z, weights=1/z_erro)
+    info = fitter.fit_info
+
+    result = {}
+    # The errors of parameters are assumed to be the sqrt of the diagonal of
+    # the covariance matrix
+    for i, j, k in zip(m_fitted.param_names, m_fitted.parameters,
+                       np.sqrt(np.diag(info['param_cov']))):
+        result[i] = {'value': j, 'sigma': k}
+
+    q, u = result['q']['value'], result['u']['value']
+    q_err, u_err = result['q']['sigma'], result['u']['sigma']
+    p = np.sqrt(q**2 + u**2)
+    p_err = np.sqrt(((q/p)**2)*(q_err**2) + ((u/p)**2)*(u_err**2))
+    result['p'] = {'value': p, 'sigma': p_err}
+    result['sigma_theor'] = th_error
+
+    return result

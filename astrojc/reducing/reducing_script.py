@@ -574,7 +574,8 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type,
         retarder_direction = -1
     if retarder_direction == 'ccw':
         retarder_direction = 1
-    pos = np.array(retarder_positions)*retarder_rotation*retarder_direction
+    pos = np.array(retarder_positions)
+    interval = retarder_rotation*retarder_direction
 
     tmp = Table()
 
@@ -585,10 +586,9 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type,
         e = np.array([ph[j][f][pairs[idx]['e']] for j in range(len(ph))])
         oe = np.array([ph[j][fe][pairs[idx]['o']] for j in range(len(ph))])
         ee = np.array([ph[j][fe][pairs[idx]['e']] for j in range(len(ph))])
-        # res, err, therr = calculate_polarimetry(o, e, pos,
-        #                                         retarder=retarder_type,
-        #                                         o_err=oe, e_err=ee)
-        for k in ['flux']:  # + list(res.keys()) + ['sigma_theor']:
+        res = calculate_polarimetry(o, e, pos, rotation_interval=interval,
+                                    retarder=retarder_type, o_err=oe, e_err=ee)
+        for k in ['flux'] + list(res.keys()) + ['sigma_theor']:
             if k not in tmp.colnames:
                 tmp.add_column(Column(name=k, dtype='f8',
                                       length=len(pairs)))
@@ -597,15 +597,13 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type,
                                           dtype='f8',
                                           length=len(pairs)))
             if k == 'sigma_theor':
-                # tmp[k][idx] = therr
-                0 == 0
+                tmp[k][idx] = res['sigma_theor']
             elif k == 'flux':
                 tmp[k][idx] = np.sum(o)+np.sum(e)
-                tmp['{}_error'.format(k)][idx] = np.sum(oe)+np.sum(ee)
+                tmp['{}_error'.format(k)][idx] = np.sqrt(np.sum(oe)**2 + np.sum(ee)**2)
             else:
-                # tmp[k][idx] = res[k]
-                # tmp['{}_error'.format(k)][idx] = err[k]
-                0 == 0
+                tmp[k][idx] = res[k]['value']
+                tmp['{}_error'.format(k)][idx] = res[k]['sigma']
 
     for i in range(len(pairs)):
         _process(idx=i)
@@ -661,32 +659,20 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
             apkwargs[i] = kwargs.get(i)
 
     ph = {}
-    if check_iterable(kwargs['r']):
-        for i in kwargs['r']:
-            p = process_list(process_photometry, s, x=sources['x'],
-                             y=sources['y'],
-                             r=i, **apkwargs)
-            ph[i] = {}
-            ph[i]['aperture'] = [Table([j['aperture']['flux'],
-                                        j['aperture']['flux_error']])
-                                 if j['aperture'] is not None else None
-                                 for j in p]
-            ph[i]['psf'] = [Table([j['psf']['flux'], j['psf']['flux_error']])
-                            if j['psf'] is not None else None
-                            for j in p]
-    else:
+    if not check_iterable(kwargs['r']):
+        kwargs['r'] = [kwargs['r']]
+    for i in kwargs['r']:
         p = process_list(process_photometry, s, x=sources['x'],
                          y=sources['y'],
-                         r=kwargs['r'], **apkwargs)
-        ph[kwargs['r']] = {}
-        ph[kwargs['r']]['aperture'] = [Table([j['aperture']['flux'],
-                                              j['aperture']['flux_error']])
-                                       if j['aperture'] is not None else None
-                                       for j in p]
-        ph[kwargs['r']]['psf'] = [Table([j['psf']['flux'],
-                                         j['psf']['flux_error']])
-                                  if j['psf'] is not None else None
-                                  for j in p]
+                         r=i, **apkwargs)
+        ph[i] = {}
+        ph[i]['aperture'] = [Table([j['aperture']['flux'],
+                                    j['aperture']['flux_error']])
+                             if j['aperture'] is not None else None
+                             for j in p]
+        ph[i]['psf'] = [Table([j['psf']['flux'], j['psf']['flux_error']])
+                        if j['psf'] is not None else None
+                        for j in p]
 
     if solve_phot:
         solvekwargs = {}
@@ -846,13 +832,13 @@ class ReduceScript():
                 prod = copy.copy(default)
                 prod.update(v)
                 batch_key_replace(prod)
-                try:
-                    self.run(i, **prod)
-                except Exception as e:
-                    logger.error('Problem in the process of {} product from'
-                                 ' {} file. Passing it.'.format(i, filename) +
-                                 '\nError: {}'.format(e))
-                # self.run(i, **prod)
+                # try:
+                #     self.run(i, **prod)
+                # except Exception as e:
+                #     logger.error('Problem in the process of {} product from'
+                #                  ' {} file. Passing it.'.format(i, filename) +
+                #                  '\nError: {}'.format(e))
+                self.run(i, **prod)
 
     def run(self, name, **config):
         """Run a single product. Config is the dictionary of needed
@@ -953,7 +939,8 @@ class PhotometryScript(ReduceScript):
                         hdu.header[key] = v
             hdus.append(hdu)
 
-        hdulist = fits.HDUList([*ccd.to_hdu(wcs_relax=True), *hdus])
+        mkdir_p(product_dir)
+        hdulist = fits.HDUList([ccd, *hdus])
         hdulist.writeto(os.path.join(product_dir,
                                      "photometry_{}".format(name)))
 
@@ -1028,6 +1015,7 @@ class PolarimetryScript(ReduceScript):
                         hdu.header[key] = v
             hdus.append(hdu)
 
+        mkdir_p(product_dir)
         hdulist = fits.HDUList([image, *hdus])
         hdulist.writeto(os.path.join(product_dir,
                                      "polarimetry_astrojc_{}".format(name)))

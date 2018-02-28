@@ -61,6 +61,9 @@ def solve_decimal(value):
 
 def read_opd_header_number(value):
     """Reads the numbers in headers from OPD images, that uses ',' as dec."""
+    if isinstance(value, (six.integer_types, float)):
+        return value
+
     if ',' in value:
         v = solve_decimal(value)
     else:
