@@ -971,8 +971,10 @@ class PolarimetryScript(ReduceScript):
         for i in ('master_bias', 'master_flat', 'dark_frame', 'badpixmask',
                   'prebin', 'gain_key', 'gain', 'rdnoise_key',
                   'combine_method', 'combine_sigma', 'exposure_key',
-                  'mem_limit', 'save_calib_path', 'combine_align_method',
-                  'calib_dir', 'product_dir', 'remove_cosmics'):
+                  'mem_limit', 'combine_align_method',
+                  'calib_dir', 'product_dir', 'remove_cosmics',
+                  # 'save_calib_path'):
+                  ):
             if i in config.keys():
                 calib_kwargs[i] = config[i]
         ccds = calib_science(s, **calib_kwargs)
