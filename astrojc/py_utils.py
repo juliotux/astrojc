@@ -3,6 +3,20 @@ import six
 from .logging import log as logger
 
 
+def string_fix(string):
+    """Fix the byte<-> string problem in python 3"""
+    if not isinstance(string, six.string_types):
+        if six.PY3:
+            try:
+                string = str(string, 'utf-8')
+            except Exception:
+                try:
+                    string = str(string, 'latin-1')
+                except Exception:
+                    string = string
+    return string
+
+
 def process_list(_func, iterator, *args, **kwargs):
     """Run a function func for all i in a iterator list."""
     return [_func(i, *args, **kwargs) for i in iterator]

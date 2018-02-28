@@ -43,14 +43,11 @@ from .astrometry_wrapper import solve_astrometry_xy, wcs_xy2radec
 from .polarimetry import estimate_dxdy, match_pairs, calculate_polarimetry
 from . import pccdpack_wrapper as pccd
 from ..io.mkdir import mkdir_p
-from ..py_utils import process_list, batch_key_replace, check_iterable
+from ..py_utils import (process_list, batch_key_replace, check_iterable,
+                        string_fix)
 
 
 DEBUG = True
-
-if DEBUG:
-    from matplotlib import pyplot as plt
-    failed = 'fail.log'
 
 # Important: this is the default keys of the configuration files!
 '''
@@ -387,12 +384,13 @@ def _identify_star(table, wcs, filter, identify_catalog_file,
                                       filters=None,
                                       prepend_id_key=False)
         limit_angle = identify_limit_angle
-        res['sci_id'], _, _ = sci.query_id_mag(ra, dec, None,
-                                               limit_angle=limit_angle)
-        res['ra'] = ra
-        res['dec'] = dec
+        sci_names, _, _ = sci.query_id_mag(ra, dec, None,
+                                           limit_angle=limit_angle)
+        res['sci_id'] = process_list(string_fix, sci_names)
 
-    res['cat_id'] = name
+    res['cat_id'] = process_list(string_fix, name)
+    res['ra'] = ra
+    res['dec'] = dec
     res['cat_mag'] = mag
     res['cat_mag_err'] = mag_err
 
@@ -764,7 +762,8 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
                               os.path.join(dtmp, 'object.ord'))
     dat_table = Table.read(os.path.join(dtmp, 'dat.001'),
                            format='ascii.no_header')
-    log_table = pccd.read_log(os.path.join(dtmp, 'object.log'))
+    log_table = pccd.read_log(os.path.join(dtmp, 'object.log'),
+                              return_table=True)
 
     x, y = out_table['X0'], out_table['Y0']
     data = check_hdu(files[0])
@@ -853,9 +852,7 @@ class ReduceScript():
                     logger.error('Problem in the process of {} product from'
                                  ' {} file. Passing it.'.format(i, filename) +
                                  '\nError: {}'.format(e))
-                    if DEBUG:
-                        os.system("echo \"{:<32} {:<32} {}\" >> {}"
-                                  .format(filename, i, e, failed))
+                # self.run(i, **prod)
 
     def run(self, name, **config):
         """Run a single product. Config is the dictionary of needed
@@ -980,6 +977,9 @@ class PolarimetryScript(ReduceScript):
                 calib_kwargs[i] = config[i]
         ccds = calib_science(s, **calib_kwargs)
 
+        image = combine(ccds, method='sum', mem_limit=config.get('mem_limit',
+                                                                 _mem_limit))
+
         polkwargs = {}
         for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
                   'retarder_key', 'retarder_type', 'retarder_direction',
@@ -1026,9 +1026,6 @@ class PolarimetryScript(ReduceScript):
                         hdu.header[key] = v
             hdus.append(hdu)
 
-        image = combine(ccds, method='sum', mem_limit=config.get('mem_limit',
-                                                                 _mem_limit))
-
         hdulist = fits.HDUList([image, *hdus])
         hdulist.writeto(os.path.join(product_dir,
                                      "polarimetry_astrojc_{}".format(name)))
@@ -1037,6 +1034,7 @@ class PolarimetryScript(ReduceScript):
         # hdus = []
         # hdus.append(fits.BinTableHDU(pccd[0], name='out_table'))
         # hdus.append(fits.BinTableHDU(pccd[1], name='dat_table'))
+        # hdus.append(fits.BinTableHDU(pccd[2], name='log_table'))
         # hdulist = fits.HDUList([fits.PrimaryHDU(header=image.header),
         #                         *hdus])
         # hdulist.writeto(os.path.join(product_dir,

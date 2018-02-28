@@ -303,6 +303,7 @@ def imarith(operand1, operand2, operation, inplace=False):
         nhdu.data = _arith_funcs[operation](data1, data2)
     except Exception as e:
         raise ValueError('Could not process the operation {} between {} and {}'
-                         .format(operation, data1, data2))
+                         'Error: {}'
+                         .format(operation, operand1, operand2, e))
 
     return nhdu

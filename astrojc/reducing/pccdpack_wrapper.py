@@ -127,7 +127,7 @@ def read_qphot_mag(filename):
     return t
 
 
-def read_log(log_file):
+def read_log(log_file, return_table=False):
     """Read the .log file from pccdpack and return a dict with the results"""
 
     f = open(log_file, 'r')
@@ -147,6 +147,9 @@ def read_log(log_file):
 
     params_index = None
     z_index = None
+
+    if return_table:
+        t = None
 
     i = 0
     while i < len(f):
@@ -206,6 +209,7 @@ def read_log(log_file):
                     z.append(float(k))
                 z_index += 1
                 del zlin
+            z = np.array(z)
             result[star][aperture]['z'] = z
 
             if _aperture == n_apertures:
@@ -213,6 +217,31 @@ def read_log(log_file):
             read_apertures = False
             i = z_index
         i += 1
+
+    if return_table:
+        for s in result.keys():
+            for a in result[s].keys():
+                if a != 'positions':
+                    z = result[s][a]['z']
+                    params = result[s][a]['params']
+                    if t is None:
+                        p = ['f8']*len(params.keys())
+                        t = Table(names=['STAR', 'APERTURE', 'Z',
+                                         *params.keys()],
+                                  dtype=['i4', 'f8', '{}f8'.format(wave_n_pos),
+                                         *p])
+                    try:
+                        t.add_row([s, a, z, *params.values()])
+                    except Exception as e:
+                        print(['STAR', 'APERTURE', 'Z', *pnames],
+                              [star, aperture, z, *params])
+                        raise e
+
+        t.meta['wavetype'] = wavetype
+        t.meta['wave_npos'] = wave_n_pos
+        t.meta['wave_pos'] = wave_pos
+        return t
+
     return result
 
 
@@ -229,7 +258,7 @@ def read_out(file_out, file_ord=None):
         try:
             lin = ff.FortranRecordReader(form).read(l[:lenght])
         except ValueError:
-            lin = [np.nan] * n-2
+            lin = [np.nan] * int(n-2)
 
         ap, nstar = l[lenght:].split()
         lin.append(float(ap))
@@ -239,7 +268,10 @@ def read_out(file_out, file_ord=None):
     fout = open(file_out, 'r').readlines()
     t = Table(names=fout[0].strip('\n').split())
     for i in range(1, len(fout)):
-        t.add_row(_read_line(fout[i].strip('\n'), len(t.colnames)))
+        try:
+            t.add_row(_read_line(fout[i].strip('\n'), len(t.colnames)))
+        except ValueError:
+            pass
     fout = t
     if file_ord is not None:
         ford = asci.read(file_ord)
@@ -283,7 +315,8 @@ def create_script(result_dir, image_list, star_name,
               'danel': r_dann,
               'autoabe': 'no',
               'desloca': 'no',
-              'confirm': 'no'}
+              'confirm': 'no',
+              'verify': 'no'}
 
     ref = fits.open(image_list[0])[0]
     kwargs['gan'] = float(ref.header[gain_key])
