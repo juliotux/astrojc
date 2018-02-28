@@ -37,8 +37,7 @@ class AstrometrySolver():
     specify to keep it with 'keep_files'.
     """
     def __init__(self, astrometry_command=shutil.which('solve-field'),
-                 defaults={'no-plot': None, 'overwrite': None,
-                           'depth': "40,80,120"},
+                 defaults={'no-plot': None, 'overwrite': None},
                  keep_files=False):
         self._command = astrometry_command
         self._defaults = defaults

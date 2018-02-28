@@ -97,7 +97,8 @@ def estimate_normalize(o, e, positions):
 
 
 def calculate_polarimetry(o, e, positions, rotation_interval,
-                          retarder='half', o_err=None, e_err=None):
+                          retarder='half', o_err=None, e_err=None,
+                          normalize=True):
     """Calculate the polarimetry."""
 
     if retarder == 'half':
@@ -111,11 +112,14 @@ def calculate_polarimetry(o, e, positions, rotation_interval,
     e = np.array(e)
     positions = np.array(positions)
 
-    k = estimate_normalize(o, e, positions)
-    z = (o-(e*k))/(o+(e*k))
+    if normalize:
+        k = estimate_normalize(o, e, positions)
+        z = (o-(e*k))/(o+(e*k))
+    else:
+        z = (o-e)/(o+e)
     psi = positions*rotation_interval
     if o_err is None or e_err is None:
-        z_erro = np.ones(len(positions))
+        z_erro = None
         th_error = None
     else:
         # Assuming individual z errors from propagation
@@ -128,7 +132,10 @@ def calculate_polarimetry(o, e, positions, rotation_interval,
         th_error = np.sum(z_erro)/np.sqrt(len(positions))
 
     fitter = LevMarLSQFitter()
-    m_fitted = fitter(model, psi, z, weights=1/z_erro)
+    if z_erro is None:
+        m_fitted = fitter(model, psi, z)
+    else:
+        m_fitted = fitter(model, psi, z, weights=1/z_erro)
     info = fitter.fit_info
 
     result = {}
@@ -144,5 +151,9 @@ def calculate_polarimetry(o, e, positions, rotation_interval,
     p_err = np.sqrt(((q/p)**2)*(q_err**2) + ((u/p)**2)*(u_err**2))
     result['p'] = {'value': p, 'sigma': p_err}
     result['sigma_theor'] = th_error
+    if z_erro is None:
+        result['z'] = {'value': z, 'sigma': np.array([np.nan]*len(z))}
+    else:
+        result['z'] = {'value': z, 'sigma': z_erro}
 
     return result
