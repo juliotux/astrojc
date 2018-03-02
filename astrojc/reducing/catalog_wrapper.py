@@ -1,5 +1,3 @@
-from multiprocessing.pool import Pool
-from multiprocessing import cpu_count
 from astropy.coordinates.angles import Angle
 from astropy.coordinates import SkyCoord, match_coordinates_sky
 from astropy.io import ascii as asci
@@ -463,14 +461,10 @@ def solve_photometry_montecarlo(fluxes, flux_error, references, limits=(5, 18),
     if float(n_stars).is_integer():
         n_stars = n_stars
     else:
-        n_stars = int(n_stars*len(fluxes))
+        n_stars = max(1, int(n_stars*len(fluxes)))
 
-    args = [(mags, references, limits, n_stars)]*n_iter
-
-    p = Pool(cpu_count())
-    iter_mags = p.map(_montecarlo_loop, args)
-
-    print(np.array(iter_mags).shape)
+    args = (mags, references, limits, n_stars)
+    iter_mags = [_montecarlo_loop(args) for i in range(n_iter)]
 
     result = np.nanmedian(iter_mags, axis=0)
     errors = np.nanstd(iter_mags, axis=0)

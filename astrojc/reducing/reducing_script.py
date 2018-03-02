@@ -618,8 +618,8 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
     except Exception as e:
         wcs = None
         ids = Table()
-        logger.warn('Astrometry not solved. Ignoring identification. '
-                    '{}'.format(e))
+        logger.error('Astrometry not solved. Ignoring identification. '
+                     '{}'.format(e))
 
     ids['x0'] = res_tmp['xo']
     ids['y0'] = res_tmp['yo']
@@ -779,8 +779,8 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
         out_table['dec'] = ids['dec']
     except Exception as e:
         wcs = None
-        logger.warn('Astrometry not solved. Ignoring identification. '
-                    '{}'.format(e))
+        logger.error('Astrometry not solved. Ignoring identification. '
+                     '{}'.format(e))
 
     shutil.rmtree(dtmp)
 
@@ -1052,6 +1052,8 @@ class PolarimetryScript(ReduceScript):
             t = {}
             wcs = None
 
+        mkdir_p(product_dir)
+
         image = combine(ccds, method='sum', mem_limit=config.get('mem_limit',
                                                                  _mem_limit))
         if wcs is not None:
@@ -1104,10 +1106,9 @@ class PolarimetryScript(ReduceScript):
                         hdu.header[key] = v
             hdus.append(hdu)
 
-        mkdir_p(product_dir)
-        if process_astrojc:
             hdulist = fits.HDUList([image, *hdus])
             hdulist.writeto(astrojc_prod, overwrite=True)
+            del hdulist
 
         if process_pccd:
             if not config.get('astrojc_cal', True):
@@ -1125,6 +1126,7 @@ class PolarimetryScript(ReduceScript):
             hdulist = fits.HDUList([fits.PrimaryHDU(header=image.header),
                                     *hdus])
             hdulist.writeto(pccd_prod, overwrite=True)
+            del hdulist
 
 
 class MasterReduceScript(ReduceScript):

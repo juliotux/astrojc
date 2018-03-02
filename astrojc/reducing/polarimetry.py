@@ -160,4 +160,6 @@ def calculate_polarimetry(o, e, positions, rotation_interval,
     else:
         result['z'] = {'value': z, 'sigma': z_erro}
 
+    del fitter
+
     return result
