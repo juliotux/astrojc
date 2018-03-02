@@ -901,16 +901,23 @@ class PhotometryScript(ReduceScript):
         night = config['night']
         s = [os.path.join(config['raw_dir'], i) for i in config['sources']]
 
-        calib_kwargs = {}
-        for i in ('master_bias', 'master_flat', 'dark_frame', 'badpixmask',
-                  'prebin', 'gain_key', 'gain', 'rdnoise_key',
-                  'combine_method', 'combine_sigma', 'exposure_key',
-                  'mem_limit', 'save_calib_path', 'combine_align_method',
-                  'calib_dir', 'product_dir', 'remove_cosmics',
-                  'bias_check_keys', 'flat_check_keys', 'dark_check_keys'):
-            if i in config.keys():
-                calib_kwargs[i] = config[i]
-        ccd = calib_science(s, **calib_kwargs)
+        if config.get('astrojc_cal', True):
+            calib_kwargs = {}
+            for i in ('master_bias', 'master_flat', 'dark_frame', 'badpixmask',
+                      'prebin', 'gain_key', 'gain', 'rdnoise_key',
+                      'combine_method', 'combine_sigma', 'exposure_key',
+                      'mem_limit', 'save_calib_path', 'combine_align_method',
+                      'calib_dir', 'product_dir', 'remove_cosmics',
+                      'bias_check_keys', 'flat_check_keys', 'dark_check_keys'):
+                if i in config.keys():
+                    calib_kwargs[i] = config[i]
+            ccd = calib_science(s, **calib_kwargs)
+        elif 'save_calib_path' in config.keys():
+            ccd = process_list(os.path.basename, s)
+            ccd = [os.path.join(config['save_calib_path'], i) for i in ccd]
+            ccd = combine(ccd, method=config['combine_method'])
+        else:
+            ccd = combine(s, method=config['combine_method'])
 
         photkwargs = {}
         for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
@@ -955,9 +962,9 @@ class PhotometryScript(ReduceScript):
             hdus.append(hdu)
 
             best = Table(dtype=t[i].dtype)
-            for group in t[i].group_by('star_index'):
+            for group in t[i].group_by('star_index').groups:
                 b = np.argmax(group['flux']/group['flux_error'])
-                best.add_row(t[i][b])
+                best.add_row(group[b])
             best['snr'] = best['flux']/best['flux_error']
 
             hdu = fits.BinTableHDU(best, name="{}_best_snr".format(i))
@@ -1001,7 +1008,7 @@ class PolarimetryScript(ReduceScript):
                             os.path.isfile(pccd_prod))
         else:
             process_pccd = config.get('pccdpack', False)
-            process_astrojc = config.get('astrojc_pol')
+            process_astrojc = config.get('astrojc_pol', True)
 
         if not process_pccd and not process_astrojc and \
            not config.get('astrojc_cal', False):
@@ -1106,9 +1113,9 @@ class PolarimetryScript(ReduceScript):
                         hdu.header[key] = v
             hdus.append(hdu)
 
+        if process_astrojc:
             hdulist = fits.HDUList([image, *hdus])
             hdulist.writeto(astrojc_prod, overwrite=True)
-            del hdulist
 
         if process_pccd:
             if not config.get('astrojc_cal', True):
@@ -1126,7 +1133,6 @@ class PolarimetryScript(ReduceScript):
             hdulist = fits.HDUList([fits.PrimaryHDU(header=image.header),
                                     *hdus])
             hdulist.writeto(pccd_prod, overwrite=True)
-            del hdulist
 
 
 class MasterReduceScript(ReduceScript):
