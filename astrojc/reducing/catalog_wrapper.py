@@ -1,3 +1,5 @@
+from multiprocessing.pool import Pool
+from multiprocessing import cpu_count
 from astropy.coordinates.angles import Angle
 from astropy.coordinates import SkyCoord, match_coordinates_sky
 from astropy.io import ascii as asci
@@ -439,6 +441,21 @@ def solve_photometry_average(fluxes, flux_error, references, limits=(5, 18)):
     return mags + dif, error
 
 
+def _montecarlo_loop(args):
+    mags = args[0]
+    references = args[1]
+    limits = args[2]
+    n_stars = args[3]
+
+    iter_mags = np.zeros(len(mags))
+    iter_mags[:] = np.nan
+
+    choices = np.random.choice(len(mags), n_stars)
+    iter_mags = mags + bn.nanmedian(references[choices] -
+                                    mags[choices])
+    return iter_mags
+
+
 def solve_photometry_montecarlo(fluxes, flux_error, references, limits=(5, 18),
                                 n_iter=100, n_stars=0.2):
     mags = -2.5*np.log10(fluxes)
@@ -448,13 +465,13 @@ def solve_photometry_montecarlo(fluxes, flux_error, references, limits=(5, 18),
     else:
         n_stars = int(n_stars*len(fluxes))
 
-    iter_mags = np.zeros((len(fluxes), n_iter), dtype='f8')
-    for i in range(n_iter):
-        for j in range(len(fluxes)):
-            choices = np.random.choice(len(fluxes), n_stars)
-            iter_mags[j, i] = mags[j] + bn.nanmedian(references[choices] -
-                                                     mags[choices])
+    args = [(mags, references, limits, n_stars)]*n_iter
 
-    result = np.nanmedian(iter_mags, axis=1)
-    errors = np.nanstd(iter_mags, axis=1)
+    p = Pool(cpu_count())
+    iter_mags = p.map(_montecarlo_loop, args)
+
+    print(np.array(iter_mags).shape)
+
+    result = np.nanmedian(iter_mags, axis=0)
+    errors = np.nanstd(iter_mags, axis=0)
     return result, errors

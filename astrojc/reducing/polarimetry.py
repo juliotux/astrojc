@@ -55,9 +55,8 @@ def match_pairs(x, y, dx, dy, tolerance=1.0):
     return results[:npairs]
 
 
-def __trashed_estimate_normalize(o, e, positions, n_consecutive):
+def estimate_normalize(o, e, positions, n_consecutive):
     """Estimate the normalization of a given set of data.
-    Trashed, do not use!
     """
     data_o = [[]]*n_consecutive
     data_e = [[]]*n_consecutive
@@ -77,8 +76,8 @@ def __trashed_estimate_normalize(o, e, positions, n_consecutive):
 
     # Now we use as each consecutive value the mean of the values in each index
     for i in range(n_consecutive):
-        data_o[index] = np.nanmean(data_o[index])
-        data_e[index] = np.nanmean(data_e[index])
+        data_o[i] = np.nanmean(data_o[i])
+        data_e[i] = np.nanmean(data_e[i])
 
     # Now, assuming the k will multiply e
     k = np.sum(data_o)/np.sum(data_e)
@@ -86,7 +85,7 @@ def __trashed_estimate_normalize(o, e, positions, n_consecutive):
     return k
 
 
-def estimate_normalize(o, e, positions):
+def __trashed__estimate_normalize(o, e, positions, n_consecutive):
     """Estimate the normalization of a given set of data."""
     # We can estimate the k fitting a constant function to the data!
     # y(phi) = k = e(phi)/o(phi)
@@ -103,8 +102,10 @@ def calculate_polarimetry(o, e, positions, rotation_interval,
 
     if retarder == 'half':
         model = HalfWaveModel()
+        ncons = 4
     elif retarder == 'quarter':
         model = QuarterWaveModel()
+        ncons = 8
     else:
         raise ValueError('retarder {} not supported.'.format(retarder))
 
@@ -113,11 +114,11 @@ def calculate_polarimetry(o, e, positions, rotation_interval,
     positions = np.array(positions)
 
     if normalize:
-        k = estimate_normalize(o, e, positions)
+        k = estimate_normalize(o, e, positions, ncons)
         z = (o-(e*k))/(o+(e*k))
     else:
         z = (o-e)/(o+e)
-    psi = positions*rotation_interval
+    psi = np.radians(positions*rotation_interval)
     if o_err is None or e_err is None:
         z_erro = None
         th_error = None
@@ -152,7 +153,7 @@ def calculate_polarimetry(o, e, positions, rotation_interval,
     result['p'] = {'value': p, 'sigma': p_err}
     result['sigma_theor'] = th_error
 
-    theta = np.arctan(u/q)
+    theta = np.degrees(np.arctan(u/q)) % 180
     result['theta'] = {'value': theta, 'sigma': np.nan}
     if z_erro is None:
         result['z'] = {'value': z, 'sigma': np.array([np.nan]*len(z))}
