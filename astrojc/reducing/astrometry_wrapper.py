@@ -19,7 +19,8 @@ from ..math.opd_utils import solve_decimal
 
 
 __all__ = ['AstrometrySolver', 'solve_astrometry_xy', 'solve_astrometry_image',
-           'create_xyls', 'wcs_xy2radec', 'wcs_radec2xy']
+           'create_xyls', 'wcs_xy2radec', 'wcs_radec2xy',
+           'AstrometryNetUnsolvedField']
 
 
 class AstrometryNetUnsolvedField(subprocess.CalledProcessError):
@@ -266,10 +267,12 @@ def create_xyls(fname, x, y, flux, imagew, imageh, header=None, dtype='f8'):
     '''
     head = {'IMAGEW': imagew,
             'IMAGEH': imageh}
+    sort = np.argsort(flux)
     xyls = np.array(list(zip(x, y, flux)),
                     np.dtype([('x', dtype), ('y', dtype), ('flux', dtype)]))
     f = fits.HDUList([fits.PrimaryHDU(header=header),
-                      fits.BinTableHDU(xyls, header=fits.Header(head))])
+                      fits.BinTableHDU(xyls[sort[::-1]],
+                                       header=fits.Header(head))])
     log.debug('Saving .xyls to ' + fname)
     f.writeto(fname)
 
@@ -318,3 +321,38 @@ def wcs_radec2xy(ra, dec, wcs):
     """Convert RA and DEC coordinates to x and y using a WCS object."""
     wcs = WCS()
     return wcs.all_world2pix(ra, dec, ra_dec_order=True)
+
+
+def fit_wcs(x, y, ra, dec, image_width, image_height, sip=False,
+            command=shutil.which('fit-wcs')):
+    """Run astrometry.net fit-wcs command
+
+    sip is sip order, int
+    """
+    solved_wcs_file = NamedTemporaryFile(prefix='fitwcs', suffix='.wcs')
+    tmp_table = NamedTemporaryFile(prefix='fitwcs_xyrd', suffix='.fits')
+
+    xyrd = np.array(list(zip(x, y, ra, dec)),
+                    np.dtype([('FIELD_X', 'f8'), ('FIELD_Y', 'f8'),
+                              ('INDEX_RA', 'f8'), ('INDEX_DEC', 'f8')]))
+    f = fits.HDUList([fits.PrimaryHDU(),
+                      fits.BinTableHDU(xyrd)])
+    log.debug('Saving xyrd to ' + tmp_table.name)
+    f.writeto(tmp_table.name)
+
+    args = [command]
+    args += ['-c', tmp_table.name]
+    if sip:
+        args += ['-s', str(sip), '-W', str(image_width), '-H',
+                 str(image_height)]
+    args += ['-o', solved_wcs_file.name]
+
+    try:
+        subprocess.check_call(args)
+        log.info('Loading solved header from {}'.format(solved_wcs_file.name))
+        solved_header = fits.getheader(solved_wcs_file.name, 0)
+    except Exception as e:
+        raise AstrometryNetUnsolvedField("Could not fit wcs to this lists."
+                                         " Error: {}".format(e))
+
+    return WCS(solved_header, relax=True)

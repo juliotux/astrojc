@@ -24,7 +24,7 @@ def estimate_dxdy(x, y, steps=[100, 30, 5, 3], bins=30):
 
     for i in range(len(x)):
         for j in range(len(x)):
-            if x[i] < x[j]:
+            if y[i] < y[j]:
                 dya.append(y[i] - y[j])
                 dxa.append(x[i] - x[j])
 
@@ -91,7 +91,7 @@ def estimate_normalize(o, e, positions):
     # We can estimate the k fitting a constant function to the data!
     # y(phi) = k = e(phi)/o(phi)
     fitter = LinearLSQFitter()
-    fit = fitter(Const1D(), positions, e/o)
+    fit = fitter(Const1D(), positions, o/e)
 
     return fit.parameters[0]
 
@@ -151,6 +151,9 @@ def calculate_polarimetry(o, e, positions, rotation_interval,
     p_err = np.sqrt(((q/p)**2)*(q_err**2) + ((u/p)**2)*(u_err**2))
     result['p'] = {'value': p, 'sigma': p_err}
     result['sigma_theor'] = th_error
+
+    theta = np.arctan(u/q)
+    result['theta'] = {'value': theta, 'sigma': np.nan}
     if z_erro is None:
         result['z'] = {'value': z, 'sigma': np.array([np.nan]*len(z))}
     else:

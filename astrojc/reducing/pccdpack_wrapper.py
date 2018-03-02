@@ -124,6 +124,8 @@ def read_qphot_mag(filename):
             if group:
                 row = row[:-len(data)]
 
+    for i in t.colnames:
+        t.rename_column(i, str(i).lower())
     return t
 
 
@@ -242,6 +244,8 @@ def read_log(log_file, return_table=False):
         t.meta['wave_pos'] = wave_pos
         return t
 
+    for i in t.colnames:
+        t.rename_column(i, str(i).lower())
     return result
 
 
@@ -279,6 +283,9 @@ def read_out(file_out, file_ord=None):
         fout['Y0'] = [ford['YCENTER'][2*i] for i in range(len(fout))]
         fout['X1'] = [ford['XCENTER'][2*i+1] for i in range(len(fout))]
         fout['Y1'] = [ford['YCENTER'][2*i+1] for i in range(len(fout))]
+
+    for i in fout.colnames:
+        fout.rename_column(i, str(i).lower())
     return fout
 
 

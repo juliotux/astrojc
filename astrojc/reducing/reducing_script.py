@@ -10,13 +10,12 @@ import time
 
 from astropy.io import fits  # , ascii
 # from astropy import units as u
-from astropy.table import Table, Column
+from astropy.table import Table, Column, hstack, vstack
 # from astropy.time import Time
 from astropy.stats import gaussian_sigma_to_fwhm
 from astropy.wcs import WCS
 import numpy as np
-import pandas as pd
-from tempfile import mkdtemp, NamedTemporaryFile
+from tempfile import mkdtemp
 
 from ..logging import log as logger
 
@@ -39,7 +38,8 @@ from .image_processing import process_image, check_hdu, combine
 from .catalog_wrapper import (Catalog, solve_photometry_montecarlo,
                               solve_photometry_median,
                               solve_photometry_average)
-from .astrometry_wrapper import solve_astrometry_xy, wcs_xy2radec
+from .astrometry_wrapper import (solve_astrometry_xy, wcs_xy2radec,
+                                 fit_wcs)
 from .polarimetry import estimate_dxdy, match_pairs, calculate_polarimetry
 from . import pccdpack_wrapper as pccd
 from ..io.mkdir import mkdir_p
@@ -243,9 +243,8 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
         names = process_list(lambda x: os.path.join(save_calib_path,
                                                     os.path.basename(x)),
                              sources)
-        process_list(lambda x: fits.writeto(*x), zip(names,
-                                                     [i.data for i in s],
-                                                     [i.header for i in s]))
+        process_list(lambda x: fits.writeto(*x, overwrite=True),
+                     zip(names, [i.data for i in s], [i.header for i in s]))
         files_saved = True
     else:
         files_saved = False
@@ -269,7 +268,7 @@ def calib_science(sources, master_bias=None, master_flat=None, dark_frame=None,
 
 
 def _do_aperture(data, detect_fwhm=None, detect_snr=None, x=None, y=None,
-                 r=np.arange(2, 20, 1), r_in=50, r_out=60, r_find_best=True):
+                 r=5, r_in=50, r_out=60):
     """Perform aperture photometry in a image"""
     if use_sep:
         detect = sep.find_sources
@@ -290,64 +289,32 @@ def _do_aperture(data, detect_fwhm=None, detect_snr=None, x=None, y=None,
         s = np.array(list(zip(x, y)), dtype=[('x', 'f8'), ('y', 'f8')])
     else:
         s = detect(data, bkg=sky, rms=rms, snr=detect_snr, **detect_kwargs)
-    if check_iterable(r):
-        apertures = Table()
-        for i in r:
-            # logger.debug('Aperture photometry in R={}'.format(i))
-            ap = aperture(data, s['x'], s['y'], i, r_in, r_out,
-                          err=rms)
-            apertures['flux_r{}'.format(i)] = ap['flux']
-            apertures['flux_r{}_error'.format(i)] = ap['flux_error']
-
-        # FIXME: Allways return the smallest aperture
-        if r_find_best:
-            snr = np.zeros(len(r))
-            for i in range(len(r)):
-                flux = 'flux_r{}'.format(r[i])
-                error = 'flux_r{}_error'.format(r[i])
-                snr[i] = np.median(apertures[flux]/apertures[error])
-            arg = np.argmax(snr)
-            # logger.debug([(i, j) for (i, j) in zip(r, snr)])
-            # logger.debug('Best aperture matched: {}'.format(r[arg]))
-            apertures['flux'] = apertures['flux_r{}'.format(r[arg])]
-            apertures['flux_error'] = apertures['flux_r{}'.format(r[arg]) +
-                                                '_error']
-            apertures = apertures[sorted(apertures.colnames)]
-    else:
-        ap = aperture(data, s['x'], s['y'], r, r_in, r_out, err=rms)
-        apertures = Table([ap['flux'], ap['flux_error']],
-                          names=('flux', 'flux_error'))
+    ap = aperture(data, s['x'], s['y'], r, r_in, r_out, err=rms)
     res_ap = Table()
     res_ap['x'] = s['x']
     res_ap['y'] = s['y']
-    for i in apertures.colnames:
-        res_ap[i] = apertures[i]
+    res_ap['flux'] = ap['flux']
+    res_ap['flux_error'] = ap['flux_error']
 
     return res_ap
 
 
 def process_photometry(image, photometry_type, detect_fwhm=None,
                        detect_snr=None, box_size=None,
-                       r=np.arange(2, 20, 1), r_in=50,
-                       r_out=60, r_find_best=True, psf_model='gaussian',
+                       r=5, r_in=50, r_out=60, psf_model='gaussian',
                        psf_niters=1, x=None, y=None):
     """Process standart photometry in one image, without calibrations."""
     image = check_hdu(image)
     data = image.data
-    result = {'aperture': None,
-              'psf': None}
 
-    # aperture photometry
-    if photometry_type == 'aperture' or photometry_type == 'both':
-        result['aperture'] = _do_aperture(data, detect_fwhm=detect_fwhm,
-                                          detect_snr=detect_snr, r=r,
-                                          r_in=r_in, r_out=r_out,
-                                          r_find_best=r_find_best,
-                                          x=x, y=y)
+    if photometry_type == 'aperture':
+        result = _do_aperture(data, detect_fwhm=detect_fwhm,
+                              detect_snr=detect_snr, r=r,
+                              r_in=r_in, r_out=r_out,
+                              x=x, y=y)
         x = result['aperture']['x']
         y = result['aperture']['y']
-
-    if photometry_type == 'psf' or photometry_type == 'both':
+    elif photometry_type == 'psf':
         if not use_phot:
             raise ValueError('You must have Photutils installed for psf.')
 
@@ -356,7 +323,7 @@ def process_photometry(image, photometry_type, detect_fwhm=None,
                                  box_size=box_size, model=psf_model,
                                  niters=psf_niters)
 
-        result['psf'] = Table(ph)
+        result = Table(ph)
 
     return result
 
@@ -405,10 +372,6 @@ def _solve_photometry(table, wcs=None, cat_mag=None,
                       montecarlo_percentage=0.5, filter=None,
                       solve_photometry_type=None):
     """Solve the absolute photometry of a field using a catalog."""
-
-    if DEBUG:
-        start = time.time()
-
     if solve_photometry_type == 'montecarlo':
         solver = solve_photometry_montecarlo
         solver_kwargs = {'n_iter': montecarlo_iters,
@@ -440,28 +403,12 @@ def _solve_photometry(table, wcs=None, cat_mag=None,
                                               table['flux_error'],
                                               cat_mag, **solver_kwargs)
 
-    for i in table.colnames:
-        m = re.match('^flux_r\d+(\.\d+)?$', i)
-        if m:
-            r = i.strip('flux_r')
-            ma, err = solver(table['flux_r{}'.format(r)],
-                             table['flux_r{}_error'.format(r)],
-                             cat_mag, **solver_kwargs)
-            mags['mag_r{}'.format(r)] = ma
-            mags['mag_r{}_err'.format(r)] = err
-
-    if DEBUG:
-        end = time.time()
-        logger.debug("solving photometry took {} seconds".format(end-start))
-
     return mags
 
 
 def _solve_astrometry(header, table, shape, ra_key=None, dec_key=None,
                       plate_scale=None):
     """Solves the astrometry of a field and return a valid wcs."""
-    if DEBUG:
-        start = time.time()
     wcs = WCS(header, relax=True)
     if not wcs.wcs.ctype[0]:
         im_params = {}
@@ -473,13 +420,9 @@ def _solve_astrometry(header, table, shape, ra_key=None, dec_key=None,
             im_params['radius'] = 5*plate_scale*np.max(shape)/3600
         imw, imh = shape
         x, y = table['x'], table['y']
-        # TODO: when note r_find_best, this key do not exists
         flux = table['flux']
         wcs = solve_astrometry_xy(x, y, flux, header, imw, imh,
                                   image_params=im_params, return_wcs=True)
-    if DEBUG:
-        end = time.time()
-        logger.debug("solving astrometry took {} seconds".format(end-start))
     return wcs
 
 
@@ -496,24 +439,41 @@ def process_calib_photometry(image, identify_catalog_file=None,
 
     result = {'aperture': None, 'psf': None}
 
+    r = []
+    if kwargs.get('photometry_type') not in ['aperture', 'both']:
+        print('aperture with r={}'.kwargs.get('r'))
+        if check_iterable(kwargs.get('r')):
+            r = kwargs.get('r')
+        else:
+            r = [kwargs.get('r')]
+    if kwargs.get('photometry_type') in ['psf', 'both']:
+        r += ['psf']
+
+    sources = _do_aperture(image.data, r=5,
+                           detect_snr=kwargs['detect_snr'],
+                           detect_fwhm=kwargs['detect_fwhm'])
+
+    wcs = _solve_astrometry(image.header, sources,
+                            image.data.shape,
+                            ra_key=kwargs['ra_key'],
+                            dec_key=kwargs['dec_key'],
+                            plate_scale=kwargs['plate_scale'])
+
     photkwargs = {}
     for i in kwargs.keys():
-        if i in ['photometry_type', 'detect_fwhm', 'detect_snr', 'box_size',
-                 'r', 'r_out', 'r_find_best', 'psf_model', 'psf_niters']:
+        if i in ['detect_fwhm', 'detect_snr', 'box_size',
+                 'r_out', 'psf_model', 'psf_niters']:
             photkwargs[i] = kwargs.get(i)
-
-    ph = process_photometry(image, **photkwargs)
-
-    processed = [i for i in ['aperture', 'psf'] if ph[i] is not None]
-    if len(processed) == 0:
-        raise ValueError('No photometry was processed!')
-    else:
-        wcs = _solve_astrometry(image.header, ph[processed[0]],
-                                image.data.shape,
-                                ra_key=kwargs['ra_key'],
-                                dec_key=kwargs['dec_key'],
-                                plate_scale=kwargs['plate_scale'])
-        ids = _identify_star(ph[processed[0]], wcs, filter=filter,
+    for ri in r:
+        if ri == 'psf':
+            phot_type = 'psf'
+        else:
+            phot_type = 'aperture'
+        logger.info('Processing photometry for aperture {}'.format(ri))
+        ph = process_photometry(image, r=r, photometry_type=phot_type,
+                                x=sources['x'], y=sources['y'],
+                                **photkwargs)
+        ids = _identify_star(ph, wcs, filter=filter,
                              identify_catalog_file=identify_catalog_file,
                              identify_catalog_name=identify_catalog_name,
                              identify_limit_angle=identify_limit_angle,
@@ -521,17 +481,20 @@ def process_calib_photometry(image, identify_catalog_file=None,
                              science_id_key=science_id_key,
                              science_ra_key=science_ra_key,
                              science_dec_key=science_dec_key)
-
-    for i in processed:
-        res = _solve_photometry(ph[i], wcs, ids['cat_mag'],
+        res = _solve_photometry(ph, wcs, ids['cat_mag'],
                                 montecarlo_iters=montecarlo_iters,
                                 montecarlo_percentage=montecarlo_percentage,
                                 solve_photometry_type=solve_photometry_type)
-        result[i] = copy.copy(ids)
-        for j in ph[i].colnames:
-            result[i][j] = ph[i][j]
-        for j in res.colnames:
-            result[i][j] = res[j]
+
+        t = Table()
+        t['star_index'] = np.arange(0, len(sources), 1)
+        t['aperture'] = [ri if ri != 'psf' else np.nan]*len(sources)
+        t = hstack([t, ids, ph, res])
+
+        if result[phot_type] is None:
+            result[phot_type] = t
+        else:
+            result[phot_type] = hstack([result[phot_type], t])
 
     return result
 
@@ -620,7 +583,7 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type,
 def process_polarimetry(image_set, align_images=True, retarder_type=None,
                         retarder_key=None, match_pairs_tolerance=1.0,
                         retarder_rotation=22.5, retarder_direction=None,
-                        **kwargs):
+                        wcs=None, **kwargs):
     """Process the photometry and polarimetry of a set of images.
 
     kwargs are the arguments for the following functions:
@@ -636,20 +599,33 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
 
     res_tmp, pairs = _find_pairs(sources['x'], sources['y'],
                                  match_pairs_tolerance=match_pairs_tolerance)
-    wcs = _solve_astrometry(s[0].header, sources[pairs['o']],
-                            s[0].data.shape,
-                            ra_key=kwargs['ra_key'],
-                            dec_key=kwargs['dec_key'],
-                            plate_scale=kwargs['plate_scale'])
-    idkwargs = {}
-    for i in ['identify_catalog_file', 'identify_catalog_name', 'filter',
-              'identify_limit_angle', 'science_catalog',
-              'science_id_key', 'science_ra_key', 'science_dec_key']:
-        if i in kwargs.keys():
-            idkwargs[i] = kwargs[i]
-    ids = _identify_star(Table([res_tmp['xo'], res_tmp['yo']],
-                               names=('x', 'y')), wcs,
-                         **idkwargs)
+
+    try:
+        if kwargs.get('astrometry_calib', True) and wcs is None:
+            wcs = _solve_astrometry(s[0].header, sources[pairs['o']],
+                                    s[0].data.shape,
+                                    ra_key=kwargs['ra_key'],
+                                    dec_key=kwargs['dec_key'],
+                                    plate_scale=kwargs['plate_scale'])
+        idkwargs = {}
+        for i in ['identify_catalog_file', 'identify_catalog_name', 'filter',
+                  'identify_limit_angle', 'science_catalog',
+                  'science_id_key', 'science_ra_key', 'science_dec_key']:
+            if i in kwargs.keys():
+                idkwargs[i] = kwargs[i]
+        ids = _identify_star(Table([res_tmp['xo'], res_tmp['yo']],
+                                   names=('x', 'y')), wcs,
+                             **idkwargs)
+    except Exception as e:
+        wcs = None
+        ids = Table()
+        logger.warn('Astrometry not solved. Ignoring identification. '
+                    '{}'.format(e))
+
+    ids['x0'] = res_tmp['xo']
+    ids['y0'] = res_tmp['yo']
+    ids['x1'] = res_tmp['xe']
+    ids['y1'] = res_tmp['ye']
 
     solvekwargs = {}
     for i in ['montecarlo_iters', 'montecarlo_percentage',
@@ -664,12 +640,13 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
     if not check_iterable(kwargs['r']):
         kwargs['r'] = [kwargs['r']]
     apkwargs = {}
-    for i in ['photometry_type', 'detect_fwhm', 'detect_snr', 'box_size',
+    phot_type = kwargs['photometry_type']
+    for i in ['detect_fwhm', 'detect_snr', 'box_size',
               'r_in', 'r_out', 'r_find_best', 'psf_model', 'psf_niters']:
         if i in kwargs.keys():
             apkwargs[i] = kwargs.get(i)
     for i in ['aperture', 'psf']:
-        if i == apkwargs['photometry_type'] or apkwargs == 'both':
+        if i == phot_type or phot_type == 'both':
             do = True
         else:
             do = False
@@ -694,10 +671,11 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
                                      retarder_direction=retarder_direction,
                                      pairs=pairs,
                                      retarder_rotation=retarder_rotation)
-                tmp = _solve_photometry(ap, cat_mag=ids['cat_mag'],
-                                        **solvekwargs)
-                ap['mag'] = tmp['mag']
-                ap['mag_err'] = tmp['mag_err']
+                if wcs is not None:
+                    tmp = _solve_photometry(ap, cat_mag=ids['cat_mag'],
+                                            **solvekwargs)
+                    ap['mag'] = tmp['mag']
+                    ap['mag_err'] = tmp['mag_err']
 
                 solves[ri] = ap
 
@@ -712,27 +690,29 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
             result[i] = Table()
             for c in [('star_index', 'i4'), ('aperture', 'f8')]:
                 result[i].add_column(Column(name=c[0], dtype=c[1]))
-            for c in ids.itercols():
-                result[i].add_column(Column(name=c.name, dtype=c.dtype,
-                                            shape=c[0].shape))
+            if ids is not None:
+                for c in ids.itercols():
+                    result[i].add_column(Column(name=c.name, dtype=c.dtype,
+                                                shape=c[0].shape))
             for c in t.itercols():
                 result[i].add_column(Column(name=c.name, dtype=c.dtype,
                                             shape=c[0].shape))
 
         for j in range(len(t)):
             row = [j, ri]
-            row += [k for k in ids[j]]
+            if ids is not None:
+                row += [k for k in ids[j]]
             row += [k for k in t[j]]
             result[i].add_row(row)
 
-    return result
+    return result, wcs
 
 
 def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
                  retarder_rotation=22.5, retarder_direction=None,
                  save_calib_path=None, r=np.arange(1, 21, 1),
                  r_in=60, r_out=70, gain_key=None, rdnoise_key=None,
-                 **kwargs):
+                 wcs=None, **kwargs):
     files = []
     dtmp = mkdtemp(prefix='pccdpack')
 
@@ -771,28 +751,37 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
     log_table = pccd.read_log(os.path.join(dtmp, 'object.log'),
                               return_table=True)
 
-    x, y = out_table['X0'], out_table['Y0']
+    x, y = out_table['x0'], out_table['x0']
     data = check_hdu(files[0])
     ft = _do_aperture(data.data, x=x, y=y, r=5)
-    astkwargs = {}
-    for i in ['ra_key', 'dec_key', 'plate_scale']:
-        if i in kwargs.keys():
-            astkwargs[i] = kwargs[i]
-    wcs = _solve_astrometry(data.header, ft, data.data.shape, **astkwargs)
+    try:
+        if kwargs.get('astrometry_calib', True) and wcs is None:
+            astkwargs = {}
+            for i in ['ra_key', 'dec_key', 'plate_scale']:
+                if i in kwargs.keys():
+                    astkwargs[i] = kwargs[i]
+            wcs = _solve_astrometry(data.header, ft, data.data.shape,
+                                    **astkwargs)
 
-    idkwargs = {}
-    for i in ['identify_catalog_file', 'identify_catalog_name', 'filter',
-              'identify_limit_angle', 'science_catalog',
-              'science_id_key', 'science_ra_key', 'science_dec_key']:
-        if i in kwargs.keys():
-            idkwargs[i] = kwargs[i]
-    ids = _identify_star(Table([x, y], names=('x', 'y')), wcs, **idkwargs)
-    out_table['cat_id'] = ids['cat_id']
-    out_table['sci_id'] = ids['sci_id']
+        idkwargs = {}
+        for i in ['identify_catalog_file', 'identify_catalog_name', 'filter',
+                  'identify_limit_angle', 'science_catalog',
+                  'science_id_key', 'science_ra_key', 'science_dec_key']:
+            if i in kwargs.keys():
+                idkwargs[i] = kwargs[i]
+        ids = _identify_star(Table([x, y], names=('x', 'y')), wcs, **idkwargs)
+        out_table['cat_id'] = ids['cat_id']
+        out_table['sci_id'] = ids['sci_id']
+        out_table['ra'] = ids['ra']
+        out_table['dec'] = ids['dec']
+    except Exception as e:
+        wcs = None
+        logger.warn('Astrometry not solved. Ignoring identification. '
+                    '{}'.format(e))
 
     shutil.rmtree(dtmp)
 
-    return out_table, dat_table, log_table
+    return out_table, dat_table, log_table, wcs
 
 
 class ReduceScript():
@@ -933,10 +922,11 @@ class PhotometryScript(ReduceScript):
                 photkwargs[i] = config[i]
 
         t = process_calib_photometry(ccd, **photkwargs)
+        print(t)
 
         hdus = []
         for i in [i for i in t.keys() if t[i] is not None]:
-            header_keys = ['solve_photometry_type', 'plate_scale']
+            header_keys = ['solve_photometry_type', 'plate_scale', 'filter']
             if i == 'aperture':
                 header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
                                 'detect_snr']
@@ -961,10 +951,10 @@ class PhotometryScript(ReduceScript):
                         hdu.header[key] = v
             hdus.append(hdu)
 
-        mkdir_p(product_dir)
-        hdulist = fits.HDUList([ccd, *hdus])
-        hdulist.writeto(os.path.join(product_dir,
-                                     "{}_photometry_{}".format(night, name)))
+        # mkdir_p(product_dir)
+        # hdulist = fits.HDUList([ccd, *hdus])
+        # hdulist.writeto(os.path.join(product_dir,
+        #                              "{}_photometry_{}".format(night, name)))
 
 
 class PolarimetryScript(ReduceScript):
@@ -977,20 +967,40 @@ class PolarimetryScript(ReduceScript):
         night = config['night']
         s = [os.path.join(config['raw_dir'], i) for i in config['sources']]
 
+        check_exist = config.get('check_exist', False)
+
+        astrojc_prod = os.path.join(product_dir, "{}_polarimetry_astrojc_{}"
+                                    .format(night, name))
+        pccd_prod = os.path.join(product_dir, "{}_polarimetry_pccdpack_{}"
+                                 .format(night, name))
+        if check_exist:
+            process_astrojc = (config.get('astrojc_pol', True) and not
+                               os.path.isfile(astrojc_prod))
+            process_pccd = (config.get('pccdpack', False) and not
+                            os.path.isfile(pccd_prod))
+        else:
+            process_pccd = config.get('pccdpack', False)
+            process_astrojc = config.get('astrojc_pol')
+
+        if not process_pccd and not process_astrojc and \
+           not config.get('astrojc_cal', False):
+            return
+
         calib_kwargs = {}
         for i in ('master_bias', 'master_flat', 'dark_frame', 'badpixmask',
                   'prebin', 'gain_key', 'gain', 'rdnoise_key',
                   'combine_method', 'combine_sigma', 'exposure_key',
                   'mem_limit', 'combine_align_method',
                   'calib_dir', 'product_dir', 'remove_cosmics',
-                  # 'save_calib_path'):
-                  ):
+                  'save_calib_path'):
             if i in config.keys():
                 calib_kwargs[i] = config[i]
-        ccds = calib_science(s, **calib_kwargs)
 
-        image = combine(ccds, method='sum', mem_limit=config.get('mem_limit',
-                                                                 _mem_limit))
+        if config.get('astrojc_cal', True) and (process_astrojc or
+                                                process_pccd):
+            ccds = calib_science(s, **calib_kwargs)
+        else:
+            ccds = process_list(check_hdu, s)
 
         polkwargs = {}
         for i in ['ra_key', 'dec_key', 'gain_key', 'rdnoise_key',
@@ -1003,21 +1013,34 @@ class PolarimetryScript(ReduceScript):
                   'montecarlo_percentage', 'identify_catalog_file',
                   'identify_catalog_name', 'identify_limit_angle',
                   'science_catalog', 'science_id_key', 'science_ra_key',
-                  'science_dec_key']:
+                  'science_dec_key', 'astrometry_calib']:
             if i in config.keys():
                 polkwargs[i] = config[i]
 
-        if config.get('astrojc_pol', True):
+        if process_astrojc:
+            if not config.get('astrojc_cal', True):
+                if 'save_calib_path' in config.keys():
+                    ccds = [os.path.join(config['save_calib_path'],
+                                         os.path.basename(i))
+                            for i in s]
+                    ccds = process_list(check_hdu, ccds)
             logger.info('Processing polarimetry with astrojc.')
-            t = process_polarimetry(ccds, **polkwargs)
+            t, wcs = process_polarimetry(ccds, **polkwargs)
         else:
             t = {}
+            wcs = None
+
+        image = combine(ccds, method='sum', mem_limit=config.get('mem_limit',
+                                                                 _mem_limit))
+        if wcs is not None:
+            image.header += wcs.to_header(relax=True)
 
         hdus = []
         for i in [i for i in t.keys() if t[i] is not None]:
             header_keys = ['retarder_type', 'retarder_rotation',
                            'retarder_direction', 'align_images',
-                           'solve_photometry_type', 'plate_scale']
+                           'solve_photometry_type', 'plate_scale',
+                           'filter', 'night']
             if i == 'aperture':
                 header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
                                 'detect_snr']
@@ -1060,24 +1083,26 @@ class PolarimetryScript(ReduceScript):
             hdus.append(hdu)
 
         mkdir_p(product_dir)
-        if config.get('astrojc_pol', True):
+        if process_astrojc:
             hdulist = fits.HDUList([image, *hdus])
-            hdulist.writeto(os.path.join(product_dir,
-                                         "{}_polarimetry_astrojc_{}"
-                                         .format(night, name)))
+            hdulist.writeto(astrojc_prod, overwrite=True)
 
-        if config.get('pccdpack', False):
+        if process_pccd:
+            if not config.get('astrojc_cal', True):
+                if 'save_calib_path' in config.keys():
+                    ccds = [os.path.join(config['save_calib_path'],
+                                         os.path.basename(i))
+                            for i in s]
+                    ccds = process_list(check_hdu, ccds)
             logger.info('Processing polarimetry with pccdpack.')
-            pccd = run_pccdpack(ccds, **polkwargs)
+            pccd = run_pccdpack(ccds, wcs=wcs, **polkwargs)
             hdus = []
             hdus.append(fits.BinTableHDU(pccd[0], name='out_table'))
             hdus.append(fits.BinTableHDU(pccd[1], name='dat_table'))
             hdus.append(fits.BinTableHDU(pccd[2], name='log_table'))
             hdulist = fits.HDUList([fits.PrimaryHDU(header=image.header),
                                     *hdus])
-            hdulist.writeto(os.path.join(product_dir,
-                                         "{}_polarimetry_pccdpack_{}"
-                                         .format(night, name)))
+            hdulist.writeto(pccd_prod, overwrite=True)
 
 
 class MasterReduceScript(ReduceScript):
@@ -1103,7 +1128,9 @@ class MasterReduceScript(ReduceScript):
         if 'pipeline' not in config.keys():
             raise ValueError('The config must specify what pipeline will be'
                              ' used!')
-        if config['pipeline'] == 'photometry':
+        if config.get('fix_dumb', False):
+            p = FixMyDumbs()
+        elif config['pipeline'] == 'photometry':
             p = PhotometryScript()
         elif config['pipeline'] == 'polarimetry':
             p = PolarimetryScript()
@@ -1116,3 +1143,100 @@ class MasterReduceScript(ReduceScript):
                              ' supported.'.format(config['pipeline']))
 
         p.run(name, **config)
+
+
+def fix_dumbs(name, **config):
+    if config['pipeline'] == 'polarimetry':
+        product_dir = config['product_dir']
+        night = config['night']
+        astrojc_file = os.path.join(product_dir,
+                                    "{}_polarimetry_astrojc_{}"
+                                    .format(night, name))
+        pccd_file = os.path.join(product_dir,
+                                 "{}_polarimetry_pccdpack_{}"
+                                 .format(night, name))
+
+        wcs = None
+        if os.path.isfile(astrojc_file):
+            if WCS(fits.open(astrojc_file)[0].header).wcs.ctype[0] != '':
+                logger.info('using wcs from astrojc')
+                wcs = WCS(fits.open(astrojc_file)[0].header)
+
+        if wcs is None:
+            try:
+                s = [os.path.join(config['raw_dir'], i)
+                     for i in config['sources']]
+                ccds = [os.path.join(config['save_calib_path'],
+                                     os.path.basename(i))
+                        for i in s]
+                ccds = process_list(check_hdu, ccds)
+                image = combine(ccds, method='sum')
+                logger.info('creating new astrometry solution')
+                sources = _do_aperture(image.data,
+                                       detect_fwhm=config['detect_fwhm'],
+                                       detect_snr=config['detect_snr'],
+                                       r=5)
+                tolerance = config['match_pairs_tolerance']
+                _, pairs = _find_pairs(sources['x'], sources['y'],
+                                       match_pairs_tolerance=tolerance)
+                rak = config['ra_key']
+                deck = config['dec_key']
+                plt = config['plate_scale']
+                wcs = _solve_astrometry(image.header,
+                                        sources[pairs['o']],
+                                        image.data.shape,
+                                        ra_key=rak,
+                                        dec_key=deck,
+                                        plate_scale=plt)
+            except Exception as e:
+                wcs = None
+                raise e
+
+        if os.path.isfile(pccd_file):
+            resave = True
+            f = fits.open(pccd_file)
+            image = f[0]
+            out = f['OUT_TABLE']
+            t = Table.read(out)
+            for i in t.colnames:
+                t.rename_column(i, str(i).lower())
+
+            if wcs is not None:
+                f[0].header.update(wcs.to_header(relax=True))
+
+            if wcs is not None:
+                idkwargs = {}
+                for i in ['identify_catalog_file',
+                          'identify_catalog_name', 'filter',
+                          'identify_limit_angle',
+                          'science_catalog',
+                          'science_id_key', 'science_ra_key',
+                          'science_dec_key']:
+                    if i in config.keys():
+                        idkwargs[i] = config[i]
+                ids = _identify_star(Table([t['x0'],
+                                            t['y0']],
+                                           names=('x', 'y')), wcs,
+                                     **idkwargs)
+                t['sci_id'] = ids['sci_id']
+                t['cat_id'] = ids['cat_id']
+                t['ra'] = ids['ra']
+                t['dec'] = ids['dec']
+                resave = True
+
+            for i in range(len(f)):
+                f[i].header['hierarch astrojc filter'] = config['filter']
+                f[i].header['hierarch astrojc night'] = config['night']
+
+            if resave:
+                f['OUT_TABLE'] = fits.BinTableHDU(t, name='out_table')
+                f.writeto(pccd_file, overwrite=True)
+
+
+class FixMyDumbs(ReduceScript):
+    def __init__(self, config=None):
+        """Fixing some dumbies in the reducing."""
+        super(FixMyDumbs, self).__init__(config=config)
+
+    def run(self, name, **config):
+        fix_dumbs(name, **config)

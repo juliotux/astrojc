@@ -11,7 +11,7 @@ from photutils import DAOStarFinder, IRAFStarFinder
 from photutils.psf import IntegratedGaussianPRF, DAOPhotPSFPhotometry
 
 from ..logging import log as logger
-from .moffat_psf import Moffat2D_parallel as Moffat2D
+from ..math.moffat_psf import Moffat2D_parallel as Moffat2D
 
 
 def find_sources(data, fwhm, threshold=None, bkg=0.0, rms=None, snr=None,
