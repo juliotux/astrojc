@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.spatial import cKDTree
-from astropy.modeling.fitting import LevMarLSQFitter, LinearLSQFitter
-from astropy.modeling.functional_models import Const1D
+from astropy.modeling.fitting import LevMarLSQFitter
 
 from ..logging import log as logger
 from ..math.polarimetry_models import HalfWaveModel, QuarterWaveModel
@@ -85,58 +84,28 @@ def estimate_normalize(o, e, positions, n_consecutive):
     return k
 
 
-def __trashed__estimate_normalize(o, e, positions, n_consecutive):
-    """Estimate the normalization of a given set of data."""
-    # We can estimate the k fitting a constant function to the data!
-    # y(phi) = k = e(phi)/o(phi)
-    fitter = LinearLSQFitter()
-    fit = fitter(Const1D(), positions, o/e)
-
-    return fit.parameters[0]
-
-
-def calculate_polarimetry(o, e, positions, rotation_interval,
-                          retarder='half', o_err=None, e_err=None,
-                          normalize=True):
-    """Calculate the polarimetry."""
+def _calculate_polarimetry_parameters(z, psi, retarder='half', z_err=None):
+    """Calculate the polarimetry directly using z.
+    psi in degrees
+    """
 
     if retarder == 'half':
         model = HalfWaveModel()
-        ncons = 4
     elif retarder == 'quarter':
         model = QuarterWaveModel()
-        ncons = 8
     else:
         raise ValueError('retarder {} not supported.'.format(retarder))
 
-    o = np.array(o)
-    e = np.array(e)
-    positions = np.array(positions)
+    psi = np.radians(psi)
 
-    if normalize:
-        k = estimate_normalize(o, e, positions, ncons)
-        z = (o-(e*k))/(o+(e*k))
-    else:
-        z = (o-e)/(o+e)
-    psi = np.radians(positions*rotation_interval)
-    if o_err is None or e_err is None:
-        z_erro = None
-        th_error = None
-    else:
-        # Assuming individual z errors from propagation
-        o_err = np.array(o_err)
-        e_err = np.array(e_err)
-        oi = 2*o/((o+e)**2)
-        ei = -2*e/((o+e)**2)
-        z_erro = np.sqrt((oi**2)*(o_err**2) + ((ei**2)*(e_err**2)))
-        # Theor_sigma will be the sum of z errors over the sqrt of pos
-        th_error = np.sum(z_erro)/np.sqrt(len(positions))
+    # Theor_sigma will be the sum of z errors over the sqrt of pos
+    th_error = np.sum(z_err)/np.sqrt(len(psi))
 
     fitter = LevMarLSQFitter()
-    if z_erro is None:
+    if z_err is None:
         m_fitted = fitter(model, psi, z)
     else:
-        m_fitted = fitter(model, psi, z, weights=1/z_erro)
+        m_fitted = fitter(model, psi, z, weights=1/z_err)
     info = fitter.fit_info
 
     result = {}
@@ -148,18 +117,56 @@ def calculate_polarimetry(o, e, positions, rotation_interval,
 
     q, u = result['q']['value'], result['u']['value']
     q_err, u_err = result['q']['sigma'], result['u']['sigma']
+
     p = np.sqrt(q**2 + u**2)
     p_err = np.sqrt(((q/p)**2)*(q_err**2) + ((u/p)**2)*(u_err**2))
     result['p'] = {'value': p, 'sigma': p_err}
+
+    theta = np.degrees(0.5*np.arctan(u/q)) % 180
+    result['theta'] = {'value': theta, 'sigma': 28.65*p_err/p}
+
     result['sigma_theor'] = th_error
 
-    theta = np.degrees(np.arctan(u/q)) % 180
-    result['theta'] = {'value': theta, 'sigma': np.nan}
-    if z_erro is None:
+    if z_err is None:
         result['z'] = {'value': z, 'sigma': np.array([np.nan]*len(z))}
     else:
-        result['z'] = {'value': z, 'sigma': z_erro}
+        result['z'] = {'value': z, 'sigma': z_err}
 
+    # appear that if we dont delete it, it remains in another process!
     del fitter
 
     return result
+
+
+def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None,
+                          normalize=True, positions=None):
+    """Calculate the polarimetry."""
+
+    if retarder == 'half':
+        ncons = 4
+    elif retarder == 'quarter':
+        ncons = 8
+    else:
+        raise ValueError('retarder {} not supported.'.format(retarder))
+
+    o = np.array(o)
+    e = np.array(e)
+
+    if normalize and positions is not None:
+        k = estimate_normalize(o, e, positions, ncons)
+        z = (o-(e*k))/(o+(e*k))
+    else:
+        z = (o-e)/(o+e)
+
+    if o_err is None or e_err is None:
+        z_erro = None
+    else:
+        # Assuming individual z errors from propagation
+        o_err = np.array(o_err)
+        e_err = np.array(e_err)
+        oi = 2*o/((o+e)**2)
+        ei = -2*e/((o+e)**2)
+        z_erro = np.sqrt((oi**2)*(o_err**2) + ((ei**2)*(e_err**2)))
+
+    return _calculate_polarimetry_parameters(z, psi, retarder=retarder,
+                                             z_err=z_erro)

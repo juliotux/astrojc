@@ -518,9 +518,7 @@ def _find_pairs(x, y, match_pairs_tolerance):
     return tmp, pairs
 
 
-def _do_polarimetry(phot_table, retarder_positions, retarder_type,
-                    retarder_direction, pairs,
-                    retarder_rotation=22.5):
+def _do_polarimetry(phot_table, psi, retarder_type, pairs, positions=None):
     """Calculate the polarimetry of a given photometry table.
 
     phot_tables is a list of tables containing ['flux', 'flux_error']
@@ -532,13 +530,6 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type,
         raise ValueError('Table for polarimetry must contain "flux" and'
                          ' "flux_error" keys.')
 
-    if retarder_direction == 'cw':
-        retarder_direction = -1
-    if retarder_direction == 'ccw':
-        retarder_direction = 1
-    pos = np.array(retarder_positions)
-    interval = retarder_rotation*retarder_direction
-
     tmp = Table()
 
     def _process(idx):
@@ -548,12 +539,12 @@ def _do_polarimetry(phot_table, retarder_positions, retarder_type,
         e = np.array([ph[j][f][pairs[idx]['e']] for j in range(len(ph))])
         oe = np.array([ph[j][fe][pairs[idx]['o']] for j in range(len(ph))])
         ee = np.array([ph[j][fe][pairs[idx]['e']] for j in range(len(ph))])
-        res = calculate_polarimetry(o, e, pos, rotation_interval=interval,
-                                    retarder=retarder_type, o_err=oe, e_err=ee)
+        res = calculate_polarimetry(o, e, psi, retarder=retarder_type,
+                                    o_err=oe, e_err=ee, positions=positions)
         for k in ['flux'] + list(res.keys()) + ['sigma_theor']:
             if k not in tmp.colnames:
-                dt = 'f8'
-                shape = (1) if k != 'z' else (len(pos))
+                dt = 'f4'
+                shape = (1) if k != 'z' else (len(psi))
                 tmp.add_column(Column(name=k, dtype=dt, shape=shape,
                                       length=len(pairs)))
                 if k != 'sigma_theor':
@@ -638,6 +629,13 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
         # Some positions may be in hexa
         ret = [int(i.header[retarder_key], 16) for i in s]
 
+    if retarder_direction == 'cw':
+        retarder_direction = -1
+    if retarder_direction == 'ccw':
+        retarder_direction = 1
+
+    psi = np.array(ret)*retarder_rotation*retarder_direction
+
     solve_to_result = {'aperture': False, 'psf': False}
     solves = {}
     if not check_iterable(kwargs['r']):
@@ -669,11 +667,10 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
                                   r=ri, **napkwargs)
                 ph = [Table([j['flux'], j['flux_error']]) for j in ph]
                 solve_to_result[i] = True
-                ap = _do_polarimetry(ph, ret,
+                ap = _do_polarimetry(ph, psi,
                                      retarder_type=retarder_type,
-                                     retarder_direction=retarder_direction,
                                      pairs=pairs,
-                                     retarder_rotation=retarder_rotation)
+                                     positions=ret)
                 if wcs is not None:
                     tmp = _solve_photometry(ap, cat_mag=ids['cat_mag'],
                                             **solvekwargs)
@@ -691,7 +688,7 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
             i = 'aperture'
         if result[i] is None:
             result[i] = Table()
-            for c in [('star_index', 'i4'), ('aperture', 'f8')]:
+            for c in [('star_index', 'i4'), ('aperture', 'f4')]:
                 result[i].add_column(Column(name=c[0], dtype=c[1]))
             if ids is not None:
                 for c in ids.itercols():
@@ -700,7 +697,8 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
             for c in t.itercols():
                 result[i].add_column(Column(name=c.name, dtype=c.dtype,
                                             shape=c[0].shape))
-            result[i].meta['hierarch astrojc retarder_positions'] = ret
+            keyn = 'hierarch astrojc retarder_positions'
+            result[i].meta[keyn] = ','.join([str(m) for m in ret])
 
         for j in range(len(t)):
             row = [j, ri]
@@ -813,7 +811,8 @@ class ReduceScript():
     def clear(self):
         self._default_kwargss = OrderedDict()
 
-    def process_product(self, filename, dataset='all', **kwargs):
+    def process_product(self, filename, dataset='all', raise_error=False,
+                        **kwargs):
         """Process the products of a json file.
         If the configuration shares a variable with detaful values, it will be
         overrided."""
@@ -846,13 +845,16 @@ class ReduceScript():
                 prod.update(kwargs)
                 batch_key_replace(prod)
                 logger.info('Reducing {} from {}'.format(i, filename))
-                try:
+                if raise_error:
                     self.run(i, **prod)
-                except Exception as e:
-                    logger.error('Problem in the process of {} product from'
-                                 ' {} file. Passing it.'.format(i, filename) +
-                                 '\nError: {}'.format(e))
-                # self.run(i, **prod)
+                else:
+                    try:
+                        self.run(i, **prod)
+                    except Exception as e:
+                        logger.error('Problem in the process of {} product'
+                                     ' from {} file. Passing it.'
+                                     .format(i, filename) +
+                                     '\nError: {}'.format(e))
 
     def run(self, name, **config):
         """Run a single product. Config is the dictionary of needed
@@ -899,6 +901,8 @@ class PhotometryScript(ReduceScript):
         """Run this pipeline script"""
         product_dir = config['product_dir']
         night = config['night']
+        phot_prod = os.path.join(product_dir,
+                                 "{}_photometry_{}".format(night, name))
         s = [os.path.join(config['raw_dir'], i) for i in config['sources']]
 
         if config.get('astrojc_cal', True):
@@ -980,9 +984,7 @@ class PhotometryScript(ReduceScript):
 
         mkdir_p(product_dir)
         hdulist = fits.HDUList([ccd, *hdus])
-        hdulist.writeto(os.path.join(product_dir,
-                                     "{}_photometry_{}".format(night, name)),
-                        overwrite=True)
+        hdulist.writeto(phot_prod, overwrite=True)
 
 
 class PolarimetryScript(ReduceScript):

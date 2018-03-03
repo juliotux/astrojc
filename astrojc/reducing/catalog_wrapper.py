@@ -4,16 +4,14 @@ from astropy.io import ascii as asci
 from astroquery.simbad import Simbad
 from astroquery.vizier import Vizier
 from astropy import units as u
-import functools
-import bottleneck as bn
 import numpy as np
-from scipy.spatial.ckdtree import cKDTree
+try:
+    import bottleneck as bn
+except ModuleNotFoundError:
+    bn = np
 import json
-import os
 import six
 
-from .astrometry_wrapper import wcs_xy2radec as xy2radec
-from ..logging import log as logger
 from ..config import get_config_file
 from ..py_utils import batch_key_replace
 
@@ -442,8 +440,7 @@ def solve_photometry_average(fluxes, flux_error, references, limits=(5, 18)):
 def _montecarlo_loop(args):
     mags = args[0]
     references = args[1]
-    limits = args[2]
-    n_stars = args[3]
+    n_stars = args[2]
 
     iter_mags = np.zeros(len(mags))
     iter_mags[:] = np.nan
@@ -454,7 +451,7 @@ def _montecarlo_loop(args):
     return iter_mags
 
 
-def solve_photometry_montecarlo(fluxes, flux_error, references, limits=(5, 18),
+def solve_photometry_montecarlo(fluxes, flux_error, ref_mags, limits=(5, 18),
                                 n_iter=100, n_stars=0.2):
     mags = -2.5*np.log10(fluxes)
 
@@ -463,7 +460,12 @@ def solve_photometry_montecarlo(fluxes, flux_error, references, limits=(5, 18),
     else:
         n_stars = max(1, int(n_stars*len(fluxes)))
 
-    args = (mags, references, limits, n_stars)
+    nrefs = np.array(ref_mags)
+    lim = sorted(limits)
+    filt = np.where(np.logical_or(nrefs < lim[0], nrefs > lim[1]))
+    nrefs[filt] = np.nan
+
+    args = (mags, nrefs, n_stars)
     iter_mags = [_montecarlo_loop(args) for i in range(n_iter)]
 
     result = np.nanmedian(iter_mags, axis=0)
