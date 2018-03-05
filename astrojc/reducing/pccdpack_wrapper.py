@@ -239,9 +239,9 @@ def read_log(log_file, return_table=False):
                               [star, aperture, z, *params])
                         raise e
 
-        t.meta['wavetype'] = wavetype
-        t.meta['wave_npos'] = wave_n_pos
-        t.meta['wave_pos'] = wave_pos
+        t.meta['pccdpack wavetype'] = wavetype
+        t.meta['pccdpack wave_npos'] = wave_n_pos
+        t.meta['pccdpack wave_pos'] = ','.join(str(i) for i in wave_pos)
         return t
 
     for i in t.colnames:

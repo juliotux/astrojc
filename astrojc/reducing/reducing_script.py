@@ -540,10 +540,11 @@ def _do_polarimetry(phot_table, psi, retarder_type, pairs, positions=None):
         oe = np.array([ph[j][fe][pairs[idx]['o']] for j in range(len(ph))])
         ee = np.array([ph[j][fe][pairs[idx]['e']] for j in range(len(ph))])
         res = calculate_polarimetry(o, e, psi, retarder=retarder_type,
-                                    o_err=oe, e_err=ee, positions=positions)
-        for k in ['flux'] + list(res.keys()) + ['sigma_theor']:
+                                    o_err=oe, e_err=ee, positions=positions,
+                                    min_snr=5)
+        for k in res.keys():
+            dt = 'f4'
             if k not in tmp.colnames:
-                dt = 'f4'
                 shape = (1) if k != 'z' else (len(psi))
                 tmp.add_column(Column(name=k, dtype=dt, shape=shape,
                                       length=len(pairs)))
@@ -553,10 +554,6 @@ def _do_polarimetry(phot_table, psi, retarder_type, pairs, positions=None):
                                           length=len(pairs)))
             if k == 'sigma_theor':
                 tmp[k][idx] = res['sigma_theor']
-            elif k == 'flux':
-                tmp[k][idx] = np.sum(o)+np.sum(e)
-                f_err = np.sqrt(np.sum(oe)**2 + np.sum(ee)**2)
-                tmp['{}_error'.format(k)][idx] = f_err
             elif k == 'z':
                 tmp[k][idx] = res[k]['value']
                 tmp['{}_error'.format(k)][idx] = res[k]['sigma']
@@ -582,13 +579,15 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
     s = process_list(check_hdu, image_set)
     result = {'aperture': None, 'psf': None}
 
-    sources = _do_aperture(np.sum([i.data for i in s], axis=0),
+    sources = _do_aperture(s[0].data, r=5,
                            detect_fwhm=kwargs['detect_fwhm'],
-                           detect_snr=kwargs['detect_snr'],
-                           r=5)
+                           detect_snr=kwargs['detect_snr'])
+
+    logger.info('Identified {} sources'.format(len(sources)))
 
     res_tmp, pairs = _find_pairs(sources['x'], sources['y'],
                                  match_pairs_tolerance=match_pairs_tolerance)
+    logger.info('Matched {} pairs of sources'.format(len(pairs)))
 
     try:
         if kwargs.get('astrometry_calib', True) and wcs is None:
@@ -606,6 +605,9 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
         ids = _identify_star(Table([res_tmp['xo'], res_tmp['yo']],
                                    names=('x', 'y')), wcs,
                              **idkwargs)
+        if 'sci_id' in ids.colnames:
+            if not np.array(ids['sci_id'] != '').any():
+                logger.warn('No science stars found')
     except Exception as e:
         wcs = None
         ids = Table()
@@ -686,28 +688,24 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
             i = 'psf'
         else:
             i = 'aperture'
+
+        nt = Table()
+        nt.add_column(Column(data=np.arange(len(t)),
+                             name='star_index', dtype='i4'))
+        nt.add_column(Column(data=np.array([ri]*len(t)),
+                             name='aperture', dtype='f4'))
+        if ids is not None:
+            for c in ids.itercols():
+                nt.add_column(c)
+        for c in t.itercols():
+            nt.add_column(c)
+
         if result[i] is None:
-            result[i] = Table()
-            for c in [('star_index', 'i4'), ('aperture', 'f4')]:
-                result[i].add_column(Column(name=c[0], dtype=c[1]))
-            if ids is not None:
-                for c in ids.itercols():
-                    result[i].add_column(Column(name=c.name, dtype=c.dtype,
-                                                shape=c[0].shape))
-            for c in t.itercols():
-                result[i].add_column(Column(name=c.name, dtype=c.dtype,
-                                            shape=c[0].shape))
-            keyn = 'hierarch astrojc retarder_positions'
-            result[i].meta[keyn] = ','.join([str(m) for m in ret])
+            result[i] = nt
+        else:
+            result[i] = vstack([result[i], nt])
 
-        for j in range(len(t)):
-            row = [j, ri]
-            if ids is not None:
-                row += [k for k in ids[j]]
-            row += [k for k in t[j]]
-            result[i].add_row(row)
-
-    return result, wcs
+    return result, wcs, ret
 
 
 def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
@@ -1056,10 +1054,10 @@ class PolarimetryScript(ReduceScript):
                     ccds = process_list(check_hdu, ccds)
             logger.info('Processing polarimetry with astrojc.')
             logger.debug('Processing {} images'.format(len(ccds)))
-            t, wcs = process_polarimetry(ccds, **polkwargs)
+            t, wcs, ret = process_polarimetry(ccds, **polkwargs)
+            config['retarder_positions'] = ret
         else:
             t = {}
-            wcs = None
 
         mkdir_p(product_dir)
 
@@ -1071,9 +1069,9 @@ class PolarimetryScript(ReduceScript):
         hdus = []
         for i in [i for i in t.keys() if t[i] is not None]:
             header_keys = ['retarder_type', 'retarder_rotation',
-                           'retarder_direction', 'align_images',
-                           'solve_photometry_type', 'plate_scale',
-                           'filter', 'night']
+                           'retarder_direction', 'retarder_positions',
+                           'align_images', 'solve_photometry_type',
+                           'plate_scale', 'filter', 'night']
             if i == 'aperture':
                 header_keys += ['r', 'r_in', 'r_out', 'detect_fwhm',
                                 'detect_snr']
@@ -1132,8 +1130,24 @@ class PolarimetryScript(ReduceScript):
             hdus.append(fits.BinTableHDU(pccd[0], name='out_table'))
             hdus.append(fits.BinTableHDU(pccd[1], name='dat_table'))
             hdus.append(fits.BinTableHDU(pccd[2], name='log_table'))
-            hdulist = fits.HDUList([fits.PrimaryHDU(header=image.header),
-                                    *hdus])
+            header_keys = ['retarder_type', 'retarder_rotation',
+                           'retarder_direction', 'retarder_positions',
+                           'align_images', 'solve_photometry_type',
+                           'plate_scale', 'filter', 'night',
+                           'r', 'r_in', 'r_out']
+            if config.get('identify_catalog_name', None) is not None:
+                header_keys += ['identify_catalog_name',
+                                'identify_limit_angle']
+            for i in hdus:
+                for k in header_keys:
+                    if k in config.keys():
+                        v = config[k]
+                        key = 'hierarch astrojc {}'.format(k)
+                        if check_iterable(v):
+                            hdu.header[key] = ','.join([str(m) for m in v])
+                        else:
+                            hdu.header[key] = v
+            hdulist = fits.HDUList([image, *hdus])
             hdulist.writeto(pccd_prod, overwrite=True)
 
 

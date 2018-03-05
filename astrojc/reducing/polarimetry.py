@@ -125,21 +125,18 @@ def _calculate_polarimetry_parameters(z, psi, retarder='half', z_err=None):
     theta = np.degrees(0.5*np.arctan(u/q)) % 180
     result['theta'] = {'value': theta, 'sigma': 28.65*p_err/p}
 
-    result['sigma_theor'] = th_error
+    # result['sigma_theor'] = th_error
 
     if z_err is None:
         result['z'] = {'value': z, 'sigma': np.array([np.nan]*len(z))}
     else:
         result['z'] = {'value': z, 'sigma': z_err}
 
-    # appear that if we dont delete it, it remains in another process!
-    del fitter
-
     return result
 
 
 def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None,
-                          normalize=True, positions=None):
+                          normalize=True, positions=None, min_snr=5):
     """Calculate the polarimetry."""
 
     if retarder == 'half':
@@ -168,5 +165,39 @@ def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None,
         ei = -2*e/((o+e)**2)
         z_erro = np.sqrt((oi**2)*(o_err**2) + ((ei**2)*(e_err**2)))
 
-    return _calculate_polarimetry_parameters(z, psi, retarder=retarder,
-                                             z_err=z_erro)
+    flux = np.sum(o)+np.sum(e)
+    flux_err = np.sqrt(np.sum(o_err)**2 + np.sum(e_err)**2)
+
+    def _return_empty():
+        if retarder == 'half':
+            keys = ['q', 'u']
+        elif retarder == 'quarter':
+            keys = ['q', 'u', 'v']
+        dic = {}
+        for i in keys + ['p', 'theta']:
+            dic[i] = {'value': np.nan, 'sigma': np.nan}
+        dic['z'] = {'value': z, 'sigma': z_erro}
+        # dic['sigma_theor'] = np.nan
+        dic['flux'] = {'value': flux,
+                       'sigma': flux_err}
+
+        return dic
+
+    # clean problematic sources (bad sky subtraction, low snr)
+    if np.array(o <= 0).any() or np.array(e <= 0).any():
+        logger.debug('Star with negative values eliminated. Values: {} {}'
+                     .format(o, e))
+        return _return_empty()
+
+    if min_snr is not None and o_err is not None and e_err is not None:
+        snr = flux/flux_err
+        if snr < min_snr:
+            logger.debug('Star with SNR={} eliminated.'.format(snr))
+            return _return_empty()
+
+    result = _calculate_polarimetry_parameters(z, psi, retarder=retarder,
+                                               z_err=z_erro)
+    result['flux'] = {'value': flux,
+                      'sigma': flux_err}
+
+    return result
