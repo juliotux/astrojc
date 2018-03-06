@@ -1,4 +1,3 @@
-import re
 import functools
 import os
 import sys
@@ -50,15 +49,14 @@ class AstrometrySolver():
         '''
         ra = solve_decimal(str(header[ra_key]))
         dec = solve_decimal(str(header[dec_key]))
-        coords = functools.partial(SkyCoord, ra, dec)
 
-        regexp = "\d{1,3}\.?\d"
-        match_degrees = functools.partial(re.match, regexp)
-        if match_degrees(ra) and match_degrees(dec):
-            return coords(unit=(units.deg, units.deg))
-
-        # Assume (at least for now) that it's in sexagesimal
-        return coords(unit=(units.hourangle, units.deg))
+        try:
+            ra = float(ra)
+            dec = float(dec)
+            return SkyCoord(ra, dec, unit=(units.deg, units.deg))
+        except ValueError:
+            # Assume (at least for now) that it's in sexagesimal
+            return SkyCoord(ra, dec, unit=(units.hourangle, units.deg))
 
     def _guess_field_params(self, header, image_params):
         """Guess the approximate field parameters from the header.
