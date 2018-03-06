@@ -541,7 +541,7 @@ def _do_polarimetry(phot_table, psi, retarder_type, pairs, positions=None):
         ee = np.array([ph[j][fe][pairs[idx]['e']] for j in range(len(ph))])
         res = calculate_polarimetry(o, e, psi, retarder=retarder_type,
                                     o_err=oe, e_err=ee, positions=positions,
-                                    min_snr=5)
+                                    filter_negative=True)
         for k in res.keys():
             dt = 'f4'
             if k not in tmp.colnames:
@@ -609,10 +609,11 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
             if not np.array(ids['sci_id'] != '').any():
                 logger.warn('No science stars found')
     except Exception as e:
-        wcs = None
-        ids = Table()
-        logger.error('Astrometry not solved. Ignoring identification. '
-                     '{}'.format(e))
+        # wcs = None
+        # ids = Table()
+        # logger.error('Astrometry not solved. Ignoring identification. '
+        #              '{}'.format(e))
+        raise e
 
     ids['x0'] = res_tmp['xo']
     ids['y0'] = res_tmp['yo']
@@ -774,9 +775,10 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
         out_table['ra'] = ids['ra']
         out_table['dec'] = ids['dec']
     except Exception as e:
-        wcs = None
-        logger.error('Astrometry not solved. Ignoring identification. '
-                     '{}'.format(e))
+        # wcs = None
+        # logger.error('Astrometry not solved. Ignoring identification. '
+        #              '{}'.format(e))
+        raise e
 
     shutil.rmtree(dtmp)
 

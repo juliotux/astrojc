@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.spatial import cKDTree
-from astropy.modeling.fitting import LevMarLSQFitter
+from astropy.modeling.fitting import LevMarLSQFitter, FittingWithOutlierRemoval
+from astropy.stats import sigma_clip
+
 
 from ..logging import log as logger
 from ..math.polarimetry_models import HalfWaveModel, QuarterWaveModel
@@ -99,8 +101,9 @@ def _calculate_polarimetry_parameters(z, psi, retarder='half', z_err=None):
     psi = np.radians(psi)
 
     # Theor_sigma will be the sum of z errors over the sqrt of pos
-    th_error = np.sum(z_err)/np.sqrt(len(psi))
+    # th_error = np.sum(z_err)/np.sqrt(len(psi))
 
+    # We use outlier removal to remove bad images
     fitter = LevMarLSQFitter()
     if z_err is None:
         m_fitted = fitter(model, psi, z)
@@ -128,7 +131,8 @@ def _calculate_polarimetry_parameters(z, psi, retarder='half', z_err=None):
     # result['sigma_theor'] = th_error
 
     if z_err is None:
-        result['z'] = {'value': z, 'sigma': np.array([np.nan]*len(z))}
+        result['z'] = {'value': z,
+                       'sigma': np.array([np.nan]*len(z))}
     else:
         result['z'] = {'value': z, 'sigma': z_err}
 
@@ -136,7 +140,8 @@ def _calculate_polarimetry_parameters(z, psi, retarder='half', z_err=None):
 
 
 def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None,
-                          normalize=True, positions=None, min_snr=5):
+                          normalize=True, positions=None, min_snr=None,
+                          filter_negative=True):
     """Calculate the polarimetry."""
 
     if retarder == 'half':
@@ -148,6 +153,13 @@ def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None,
 
     o = np.array(o)
     e = np.array(e)
+
+    # clean problematic sources (bad sky subtraction, low snr)
+    if filter_negative and (np.array(o <= 0).any() or np.array(e <= 0).any()):
+        o_neg = np.where(o < 0)
+        e_neg = np.where(e < 0)
+        o[o_neg] = np.nan
+        e[e_neg] = np.nan
 
     if normalize and positions is not None:
         k = estimate_normalize(o, e, positions, ncons)
@@ -183,20 +195,17 @@ def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None,
 
         return dic
 
-    # clean problematic sources (bad sky subtraction, low snr)
-    if np.array(o <= 0).any() or np.array(e <= 0).any():
-        logger.debug('Star with negative values eliminated. Values: {} {}'
-                     .format(o, e))
-        return _return_empty()
-
     if min_snr is not None and o_err is not None and e_err is not None:
         snr = flux/flux_err
         if snr < min_snr:
             logger.debug('Star with SNR={} eliminated.'.format(snr))
             return _return_empty()
 
-    result = _calculate_polarimetry_parameters(z, psi, retarder=retarder,
-                                               z_err=z_erro)
+    try:
+        result = _calculate_polarimetry_parameters(z, psi, retarder=retarder,
+                                                   z_err=z_erro)
+    except Exception as e:
+        return _return_empty()
     result['flux'] = {'value': flux,
                       'sigma': flux_err}
 
