@@ -158,7 +158,7 @@ def process_calib_photometry(image, identify_catalog_file=None,
                                   detect_snr=kwargs['detect_snr'],
                                   detect_fwhm=kwargs['detect_fwhm'])
 
-    wcs = solve_astrometry(image.header, sources,
+    wcs = solve_astrometry(sources, image.header,
                            image.data.shape,
                            ra_key=kwargs['ra_key'],
                            dec_key=kwargs['dec_key'],
