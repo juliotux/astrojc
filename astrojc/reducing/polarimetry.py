@@ -401,7 +401,7 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
 
     try:
         if kwargs.get('astrometry_calib', True) and wcs is None:
-            wcs = solve_astrometry(s[0].header, sources[pairs['o']],
+            wcs = solve_astrometry(sources[pairs['o']], s[0].header,
                                    s[0].data.shape,
                                    ra_key=kwargs['ra_key'],
                                    dec_key=kwargs['dec_key'],
