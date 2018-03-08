@@ -202,7 +202,3 @@ def process_calib_photometry(image, identify_catalog_file=None,
             result[phot_type] = vstack([result[phot_type], t])
 
     return result
-
-
-def process_light_curve(image_set, jd_key='JD', align_images=True, **kwargs):
-    """Process photometry in different files and make lightcurve with them."""

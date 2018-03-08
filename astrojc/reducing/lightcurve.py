@@ -13,7 +13,8 @@ from ..logging import log as logger
 def temporal_photometry(image_list, x=None, y=None, photometry_type='aperture',
                         r=5, r_in=50, r_out=60, snr_detect=5,
                         fwhm_detect=3, psf_model='gaussian', psf_niters=1,
-                        time_key='JD', time_format='jd', align_images=True):
+                        time_key='DATE-OBS', time_format='isot',
+                        align_images=True):
     """Perform photometry on a set of images, being optimized for large number
     too.
 
@@ -70,6 +71,7 @@ def temporal_photometry(image_list, x=None, y=None, photometry_type='aperture',
     # if the images are not aligned, get the shifts between tem
     shifts = np.zeros(n_imgs, dtype=np.dtype([('x', 'f8'), ('y', 'f8')]))
     if align_images:
+        logger.info('Processing image shifts for {} images.'.format(n_imgs))
         im0 = check_hdu(image_list[0])
         for i in range(1, n_imgs):
             im = check_hdu(image_list[i])
@@ -83,13 +85,13 @@ def temporal_photometry(image_list, x=None, y=None, photometry_type='aperture',
         imname = os.path.basename(image_list[i])
         logger.info("Processing photometry of {} image.".format(imname))
         jd = Time(fits.getval(image_list[i], time_key), format=time_format)
-        jd = jd.jd()
+        jd = jd.jd
         p = process_photometry(check_hdu(image_list[i]),
                                photometry_type=photometry_type,
                                r=r, r_in=r_in, r_out=r_out,
                                psf_model=psf_model, psf_niters=psf_niters,
                                x=sources['x'] - shifts[i]['x'],
-                               y=sources['y'] - shifts[i]['x'])
+                               y=sources['y'] - shifts[i]['y'])
 
         # stack the photometry results with file/time/star infos and
         # instrumental magnitudes
@@ -112,8 +114,8 @@ def temporal_photometry(image_list, x=None, y=None, photometry_type='aperture',
 def process_lightcurve(image_list, x=None, y=None, photometry_type='aperture',
                        r=5, r_in=50, r_out=60, snr_detect=5,
                        fwhm_detect=3, psf_model='gaussian', psf_niters=1,
-                       time_key='JD', time_format='jd', align_images=True,
-                       check_dist=True):
+                       time_key='DATE-OBS', time_format='isot',
+                       align_images=True, check_dist=True):
     '''Generates a light curve using a list of images.
     See function above for parameters description.
 
@@ -139,11 +141,12 @@ def process_lightcurve(image_list, x=None, y=None, photometry_type='aperture',
                                    align_images=align_images)
 
     g = tmp_phot.group_by('star_index')
-    t = Table([g.groups[0]['jd']], names=('JD'))
+    t = Table()
+    t.add_column(g.groups[0]['jd'])
     for i in range(1, len(x), 1):
-        t['star0-star{}'.format(i)] = g.groups[0]['inst_mag'] - \
-                                      g.groups[i]['inst_mag']
+        t['star{}-star0'.format(i)] = g.groups[i]['inst_mag'] - \
+                                      g.groups[0]['inst_mag']
         err = g.groups[0]['inst_mag_error'] + g.groups[i]['inst_mag_error']
-        t['star0-star{}_error'.format(i)] = err
+        t['star{}-star0_error'.format(i)] = err
 
     return t
