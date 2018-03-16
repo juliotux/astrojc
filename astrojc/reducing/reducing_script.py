@@ -511,6 +511,7 @@ class PolarimetryScript(ReduceScript):
             t, wcs, ret = process_polarimetry(ccds, **polkwargs)
             config['retarder_positions'] = ret
         else:
+            wcs = None
             t = {}
 
         mkdir_p(product_dir)
@@ -566,6 +567,8 @@ class PolarimetryScript(ReduceScript):
             hdus.append(hdu)
 
         if process_astrojc:
+            if wcs is not None:
+                image.header.update(wcs.to_header(relax=True))
             hdulist = fits.HDUList([image, *hdus])
             hdulist.writeto(astrojc_prod, overwrite=True)
 
@@ -578,6 +581,7 @@ class PolarimetryScript(ReduceScript):
                     ccds = process_list(check_hdu, ccds)
             logger.info('Processing polarimetry with pccdpack.')
             pccd = run_pccdpack(ccds, wcs=wcs, **polkwargs)
+            wcs = pccd[3]
             hdus = []
             hdus.append(fits.BinTableHDU(pccd[0], name='out_table'))
             hdus.append(fits.BinTableHDU(pccd[1], name='dat_table'))

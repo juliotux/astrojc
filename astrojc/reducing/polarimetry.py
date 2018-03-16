@@ -95,10 +95,31 @@ def estimate_normalize(o, e, positions, n_consecutive):
     return k
 
 
+def compute_theta(q, u):
+    '''Giving q and u, compute theta'''
+    # theta = np.degrees(0.5*np.arctan(u/q)) % 180
+    # result['theta'] = {'value': theta, 'sigma': 28.65*p_err/p}
+    # Do in the pccdpack way
+    theta = np.degrees(np.arctan(u/q))
+    if q < 0:
+        theta = theta + 180
+    if u < 0 and q > 0:
+        theta = theta + 360
+    theta = theta/2
+    theta = theta % 180
+    return theta
+
+
 def _calculate_polarimetry_parameters(z, psi, retarder='half', z_err=None):
     """Calculate the polarimetry directly using z.
     psi in degrees
     """
+    result = {}
+    if z_err is None:
+        result['z'] = {'value': z,
+                       'sigma': np.array([np.nan]*len(z))}
+    else:
+        result['z'] = {'value': z, 'sigma': z_err}
 
     if retarder == 'half':
         model = HalfWaveModel()
@@ -109,22 +130,22 @@ def _calculate_polarimetry_parameters(z, psi, retarder='half', z_err=None):
 
     psi = np.radians(psi)
 
-    # Theor_sigma will be the sum of z errors over the sqrt of pos
-    # th_error = np.sum(z_err)/np.sqrt(len(psi))
-
     fitter = LevMarLSQFitter()
     if z_err is None:
         m_fitted = fitter(model, psi, z)
     else:
         m_fitted = fitter(model, psi, z, weights=1/z_err)
     info = fitter.fit_info
-
-    result = {}
     # The errors of parameters are assumed to be the sqrt of the diagonal of
     # the covariance matrix
     for i, j, k in zip(m_fitted.param_names, m_fitted.parameters,
                        np.sqrt(np.diag(info['param_cov']))):
         result[i] = {'value': j, 'sigma': k}
+
+    if z_err is not None:
+        result['sigma_theor'] = np.sqrt(np.sum(np.square(z_err))/len(z))
+    else:
+        result['sigma_theor'] = np.nan
 
     q, u = result['q']['value'], result['u']['value']
     q_err, u_err = result['q']['sigma'], result['u']['sigma']
@@ -133,16 +154,8 @@ def _calculate_polarimetry_parameters(z, psi, retarder='half', z_err=None):
     p_err = np.sqrt(((q/p)**2)*(q_err**2) + ((u/p)**2)*(u_err**2))
     result['p'] = {'value': p, 'sigma': p_err}
 
-    theta = np.degrees(0.5*np.arctan(u/q)) % 180
+    theta = compute_theta(q, u)
     result['theta'] = {'value': theta, 'sigma': 28.65*p_err/p}
-
-    # result['sigma_theor'] = th_error
-
-    if z_err is None:
-        result['z'] = {'value': z,
-                       'sigma': np.array([np.nan]*len(z))}
-    else:
-        result['z'] = {'value': z, 'sigma': z_err}
 
     return result
 
@@ -175,6 +188,9 @@ def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None,
     else:
         z = (o-e)/(o+e)
 
+    # To fit pccdpack, we had to invert z
+    z = -z
+
     if o_err is None or e_err is None:
         z_erro = None
     else:
@@ -197,7 +213,7 @@ def calculate_polarimetry(o, e, psi, retarder='half', o_err=None, e_err=None,
         for i in keys + ['p', 'theta']:
             dic[i] = {'value': np.nan, 'sigma': np.nan}
         dic['z'] = {'value': z, 'sigma': z_erro}
-        # dic['sigma_theor'] = np.nan
+        dic['sigma_theor'] = np.nan
         dic['flux'] = {'value': flux,
                        'sigma': flux_err}
 
@@ -269,12 +285,12 @@ def _do_polarimetry(phot_table, psi, retarder_type, pairs, positions=None):
                 shape = (1) if k != 'z' else (len(psi))
                 tmp.add_column(Column(name=k, dtype=dt, shape=shape,
                                       length=len(pairs)))
-                if k != 'sigma_theor':
+                if k not in ['sigma_theor', 'reduced_chi2']:
                     tmp.add_column(Column(name='{}_error'.format(k),
                                           dtype=dt, shape=shape,
                                           length=len(pairs)))
-            if k == 'sigma_theor':
-                tmp[k][idx] = res['sigma_theor']
+            if k in ['sigma_theor', 'reduced_chi2']:
+                tmp[k][idx] = res[k]
             elif k == 'z':
                 tmp[k][idx] = res[k]['value']
                 tmp['{}_error'.format(k)][idx] = res[k]['sigma']
