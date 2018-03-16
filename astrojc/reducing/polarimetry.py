@@ -13,7 +13,7 @@ from ..math.polarimetry_models import HalfWaveModel, QuarterWaveModel
 from .image_processing import check_hdu
 from .photometry import (aperture_photometry, process_photometry,
                          solve_photometry)
-from .astrometry import identify_stars, solve_astrometry
+from .astrometry import identify_stars, solve_astrometry, wcs_from_coords
 from . import pccdpack_wrapper as pccd
 from ..py_utils import (process_list, check_iterable)
 from ..logging import log as logger
@@ -349,15 +349,31 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
     x, y = out_table['x0'], out_table['x0']
     data = check_hdu(files[0])
     ft = aperture_photometry(data.data, x=x, y=y, r=5)
-    try:
-        if kwargs.get('astrometry_calib', True) and wcs is None:
-            astkwargs = {}
-            for i in ['ra_key', 'dec_key', 'plate_scale']:
-                if i in kwargs.keys():
-                    astkwargs[i] = kwargs[i]
-            wcs = solve_astrometry(data.header, ft, data.data.shape,
-                                   **astkwargs)
 
+    if wcs is None:
+        try:
+            if kwargs.get('astrometry_calib', True):
+                astkwargs = {}
+                for i in ['ra_key', 'dec_key', 'plate_scale']:
+                    if i in kwargs.keys():
+                        astkwargs[i] = kwargs[i]
+                wcs = solve_astrometry(data.header, ft, data.data.shape,
+                                       **astkwargs)
+        except Exception as e:
+            for i in ['brightest_star_ra', 'brightest_star_dec', 'plate_scale',
+                      'image_north_direction']:
+                if i not in kwargs.keys():
+                    raise e
+            logger.info('Guessing wcs from brightest star coordinates.')
+            bright = ft.sort('flux')[-1]
+            wcs = wcs_from_coords(bright['xo'][0], bright['yo'][0],
+                                  kwargs['brightest_star_ra'],
+                                  kwargs['brightest_star_dec'],
+                                  kwargs['plate_scale'],
+                                  kwargs['image_north_direction'],
+                                  kwargs['image_flip'])
+
+    if wcs is not None:
         idkwargs = {}
         for i in ['identify_catalog_file', 'identify_catalog_name', 'filter',
                   'identify_limit_angle', 'science_catalog',
@@ -369,11 +385,6 @@ def run_pccdpack(image_set, retarder_type=None, retarder_key=None,
         out_table['sci_id'] = ids['sci_id']
         out_table['ra'] = ids['ra']
         out_table['dec'] = ids['dec']
-    except Exception as e:
-        # wcs = None
-        # logger.error('Astrometry not solved. Ignoring identification. '
-        #              '{}'.format(e))
-        raise e
 
     shutil.rmtree(dtmp)
 
@@ -415,13 +426,28 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
     else:
         raise RuntimeError('No pairs of stars found on this set.')
 
-    try:
-        if kwargs.get('astrometry_calib', True) and wcs is None:
-            wcs = solve_astrometry(sources[pairs['o']], s[0].header,
-                                   s[0].data.shape,
-                                   ra_key=kwargs['ra_key'],
-                                   dec_key=kwargs['dec_key'],
-                                   plate_scale=kwargs['plate_scale'])
+    if wcs is None:
+        try:
+            if kwargs.get('astrometry_calib', True):
+                wcs = solve_astrometry(sources[pairs['o']], s[0].header,
+                                       s[0].data.shape,
+                                       ra_key=kwargs['ra_key'],
+                                       dec_key=kwargs['dec_key'],
+                                       plate_scale=kwargs['plate_scale'])
+        except Exception as e:
+            for i in ['brightest_star_ra', 'brightest_star_dec', 'plate_scale',
+                      'image_north_direction']:
+                if i not in kwargs.keys():
+                    raise e
+            bright = res_tmp.sort('flux')[-1]
+            wcs = wcs_from_coords(bright['xo'], bright['yo'],
+                                  kwargs['brightest_star_ra'],
+                                  kwargs['brightest_star_dec'],
+                                  kwargs['plate_scale'],
+                                  kwargs['image_north_direction'],
+                                  kwargs['image_flip'])
+
+    if wcs is not None:
         idkwargs = {}
         for i in ['identify_catalog_file', 'identify_catalog_name', 'filter',
                   'identify_limit_angle', 'science_catalog',
@@ -434,12 +460,6 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
         if 'sci_id' in ids.colnames:
             if not np.array(ids['sci_id'] != '').any():
                 logger.warn('No science stars found')
-    except Exception as e:
-        # wcs = None
-        # ids = Table()
-        # logger.error('Astrometry not solved. Ignoring identification. '
-        #              '{}'.format(e))
-        raise e
 
     ids['x0'] = res_tmp['xo']
     ids['y0'] = res_tmp['yo']

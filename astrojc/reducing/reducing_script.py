@@ -495,7 +495,8 @@ class PolarimetryScript(ReduceScript):
                   'identify_catalog_name', 'identify_limit_angle',
                   'science_catalog', 'science_id_key', 'science_ra_key',
                   'science_dec_key', 'astrometry_calib',
-                  'delta_x', 'delta_y']:
+                  'delta_x', 'delta_y', 'brightest_star_dec',
+                  'brightest_star_ra', 'image_flip', 'image_north_direction']:
             if i in config.keys():
                 polkwargs[i] = config[i]
 

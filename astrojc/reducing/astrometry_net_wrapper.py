@@ -19,7 +19,18 @@ from ..math.opd_utils import solve_decimal
 
 __all__ = ['AstrometrySolver', 'solve_astrometry_xy', 'solve_astrometry_image',
            'create_xyls', 'wcs_xy2radec', 'wcs_radec2xy',
-           'AstrometryNetUnsolvedField']
+           'AstrometryNetUnsolvedField', 'guess_coordinates']
+
+
+def guess_coordinates(ra, dec):
+    """Try to guess the format or ra and dec passed."""
+    try:
+        ra = float(ra)
+        dec = float(dec)
+        return SkyCoord(ra, dec, unit=(units.deg, units.deg))
+    except ValueError:
+        # Assume (at least for now) that it's in sexagesimal
+        return SkyCoord(ra, dec, unit=(units.hourangle, units.deg))
 
 
 class AstrometryNetUnsolvedField(subprocess.CalledProcessError):
@@ -50,13 +61,7 @@ class AstrometrySolver():
         ra = solve_decimal(str(header[ra_key]))
         dec = solve_decimal(str(header[dec_key]))
 
-        try:
-            ra = float(ra)
-            dec = float(dec)
-            return SkyCoord(ra, dec, unit=(units.deg, units.deg))
-        except ValueError:
-            # Assume (at least for now) that it's in sexagesimal
-            return SkyCoord(ra, dec, unit=(units.hourangle, units.deg))
+        return guess_coordinates(ra, dec)
 
     def _guess_field_params(self, header, image_params):
         """Guess the approximate field parameters from the header.
