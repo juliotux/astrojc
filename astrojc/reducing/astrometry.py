@@ -26,19 +26,20 @@ def wcs_from_coords(x, y, ra, dec, plate_scale, north, flip=None):
 
     plate_scale in arcsec/pix
 
-    north direction can be angles ('ccw', from x axis) or
-    ['right', 'top', 'left', 'bottom'] to angles [0, 90, 180, 270].
+    north direction can be angles ('cw', from top axis) or
+    ['right', 'top', 'left', 'bottom'] to angles [270, 0, 90, 180].
 
     flip means if some direction is mirrored in image.
     Can be 'ra', 'dec', 'all' or None
     The standard coordinates are ra and dec in the following order, ccw:
-    E - N - W - S
+    W - N - E - S
 
     Problems:
     This algorith is not good for coordinates far from crpix. But is useful
     when you cannot solve with other algorithms. (Like just one star in field).
     """
-    ra, dec = guess_coordinates(ra, dec)
+    sk = guess_coordinates(ra, dec)
+    ra, dec = sk.ra.degree, sk.dec.degree
 
     if isinstance(north, six.string_types):
         if north in _angles.keys():
@@ -54,8 +55,8 @@ def wcs_from_coords(x, y, ra, dec, plate_scale, north, flip=None):
     deltra = -plate_scale if flip in ['ra', 'all'] else plate_scale
     deltde = -plate_scale if flip in ['dec', 'all'] else plate_scale
 
-    rot = [[np.sin(np.radians(north)), np.cos(np.radians(north))],
-           [-np.cos(np.radians(north)), np.sin(np.radians(north))]]
+    rot = [[np.sin(np.radians(north)), -np.cos(np.radians(north))],
+           [np.cos(np.radians(north)), np.sin(np.radians(north))]]
 
     pc = np.multiply(rot, [[deltra]*2, [deltde]*2])
 

@@ -439,8 +439,10 @@ def process_polarimetry(image_set, align_images=True, retarder_type=None,
                       'image_north_direction']:
                 if i not in kwargs.keys():
                     raise e
-            bright = res_tmp.sort('flux')[-1]
-            wcs = wcs_from_coords(bright['xo'], bright['yo'],
+            # bright = sources[pairs['o']].sort('flux')[-1]
+            bright = sources[pairs['o']]
+            bright.sort('flux')
+            wcs = wcs_from_coords(bright[-1]['x'], bright[-1]['y'],
                                   kwargs['brightest_star_ra'],
                                   kwargs['brightest_star_dec'],
                                   kwargs['plate_scale'],

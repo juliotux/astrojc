@@ -60,7 +60,10 @@ def from_vizier(table, center, radius, filter, id_key='ID', ra_key='RAJ2000',
     flux_key, flux_error_key = _filter_replace(flux_key, flux_error_key,
                                                filter)
 
-    query = v.query_region(center, radius=Angle(radius), catalog=table)[0]
+    query = v.query_region(center, radius=Angle(radius), catalog=table)
+    if len(query) == 0:
+        raise RuntimeError("No online catalog results were found.")
+    query = query[0]
 
     id = query[id_key].data
     if prepend_id_key:
