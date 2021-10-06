@@ -96,7 +96,12 @@ class SpecNorm:
         self.draw()
 
     def draw(self):
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
         self.ax.figure.canvas.draw()
+        self.ax.set_xlim(xlim)
+        self.ax.set_ylim(ylim)
+
 
 ll_dt = np.dtype([('lamb_0', 'f8'), ('elem', 'U2'), ('ion', 'U8'), ('mult', 'U12')])
 
