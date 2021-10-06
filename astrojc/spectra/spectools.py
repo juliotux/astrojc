@@ -22,7 +22,7 @@ def rv_correct(wave, rv):
     return wave*(1 - rv/3e5)
 
 class SpecNorm:
-    def __init__(self, ax, wave, flux):
+    def __init__(self, ax, wave, flux, k=3):
         self.ax = ax
         self.flux = flux
         self.flux_norm = None
@@ -30,6 +30,7 @@ class SpecNorm:
         self.cont_x = []
         self.cont_y = []
         self.cont_flux = None
+        self.k = k
         #Draw and connect
         self.ax.plot(self.wave, self.flux, 'k-', label='spec_origin')
         self.connect()
@@ -77,7 +78,7 @@ class SpecNorm:
             cont_pnt_coord = np.array(cont_pnt_coord)[..., 0]
             sort_array = np.argsort(cont_pnt_coord[:, 0])
             self.cont_x, self.cont_y = cont_pnt_coord[sort_array].T
-            self.spline = splrep(self.cont_x, self.cont_y, k=3)
+            self.spline = splrep(self.cont_x, self.cont_y, k=self.k)
             self.cont_flux = splev(self.wave, self.spline)
             self.ax.plot(self.wave, self.cont_flux, 'r-',
                          lw=2, label='continuum')
@@ -129,7 +130,8 @@ class LineIdent:
 
     def disconnect(self):
         self.ax.figure.canvas.mpl_disconnect(self.click_event)
-        self.ax.figure.canvas.mpl_disconnect(self.pick_event)
+        self.ax.figure.canvas.mpl_disconnect(selray([0.        , 0.        , 0.        , ..., 1.01875921, 0.99925213,
+       0.98947898])f.pick_event)
         self.ax.figure.canvas.mpl_disconnect(self.type_event)
 
     def onpick(self, event):
