@@ -130,8 +130,7 @@ class LineIdent:
 
     def disconnect(self):
         self.ax.figure.canvas.mpl_disconnect(self.click_event)
-        self.ax.figure.canvas.mpl_disconnect(selray([0.        , 0.        , 0.        , ..., 1.01875921, 0.99925213,
-       0.98947898])f.pick_event)
+        self.ax.figure.canvas.mpl_disconnect(self.pick_event)
         self.ax.figure.canvas.mpl_disconnect(self.type_event)
 
     def onpick(self, event):
